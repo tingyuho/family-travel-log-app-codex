@@ -501,16 +501,16 @@ export default function App() {
                 <form className="trip-form" onSubmit={onSubmit}>
                   <label>
                     Trip Name
-                    <input value={form.title} onChange={onFormChange("title")} required />
+                    <input className="aligned-input" value={form.title} onChange={onFormChange("title")} required />
                   </label>
                   <div className="row">
                     <label>
                       Start
-                      <input type="date" value={form.start_date} onChange={onFormChange("start_date")} />
+                      <input className="aligned-input" type="date" value={form.start_date} onChange={onFormChange("start_date")} />
                     </label>
                     <label>
                       End
-                      <input type="date" value={form.end_date} onChange={onFormChange("end_date")} />
+                      <input className="aligned-input" type="date" value={form.end_date} onChange={onFormChange("end_date")} />
                     </label>
                   </div>
                   <fieldset className="members-fieldset">
