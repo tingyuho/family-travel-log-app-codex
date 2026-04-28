@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useMemo, useState } from "react";
+import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleMarker,
   MapContainer,
@@ -6,7 +6,6 @@ import {
   Polyline,
   Popup,
   TileLayer,
-  Tooltip,
   useMap,
 } from "react-leaflet";
 import L from "leaflet";
@@ -89,6 +88,10 @@ function tripToMapCenter(trips) {
   return [points[0].lat, points[0].lng];
 }
 
+function normalizePersonName(name) {
+  return (name || "").trim().toLowerCase();
+}
+
 function sortTrips(trips, sortBy) {
   const list = [...trips];
   if (sortBy === "name_asc") {
@@ -109,17 +112,54 @@ function sortTrips(trips, sortBy) {
   });
 }
 
-function MapFocus({ selectedTrip }) {
+function normalizeLng(lng) {
+  return ((((lng + 180) % 360) + 360) % 360) - 180;
+}
+
+function buildFocusBounds(points) {
+  const latLngs = points.map(([lat, lng]) => L.latLng(lat, lng));
+  if (!latLngs.length) return null;
+
+  let bounds = L.latLngBounds(latLngs);
+  const directSpan = bounds.getEast() - bounds.getWest();
+
+  // If selected points straddle the date line, shift negative longitudes to reduce span.
+  if (directSpan > 180) {
+    const shifted = latLngs.map((point) =>
+      L.latLng(point.lat, point.lng < 0 ? point.lng + 360 : point.lng)
+    );
+    const shiftedBounds = L.latLngBounds(shifted);
+    const sw = shiftedBounds.getSouthWest();
+    const ne = shiftedBounds.getNorthEast();
+    bounds = L.latLngBounds(
+      [sw.lat, normalizeLng(sw.lng)],
+      [ne.lat, normalizeLng(ne.lng)]
+    );
+  }
+
+  return bounds.pad(0.14);
+}
+
+function MapFocus({ selectedTrips }) {
   const map = useMap();
   useEffect(() => {
-    if (!selectedTrip || !selectedTrip.route?.length) return;
-    const points = selectedTrip.route.map((p) => [p.lat, p.lng]);
+    if (!selectedTrips?.length) return;
+    const points = selectedTrips
+      .flatMap((trip) => trip.route || [])
+      .map((point) => [point.lat, point.lng]);
+    if (!points.length) return;
     if (points.length === 1) {
       map.setView(points[0], Math.max(map.getZoom(), 7), { animate: true });
       return;
     }
-    map.fitBounds(points, { padding: [28, 28] });
-  }, [map, selectedTrip]);
+    const bounds = buildFocusBounds(points);
+    if (!bounds || !bounds.isValid()) return;
+    map.fitBounds(bounds, {
+      padding: [42, 42],
+      maxZoom: 8,
+      animate: true,
+    });
+  }, [map, selectedTrips]);
   return null;
 }
 
@@ -166,9 +206,15 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [sortBy, setSortBy] = useState("date_desc");
-  const [personFilter, setPersonFilter] = useState("all");
+  const [selectedPeopleFilters, setSelectedPeopleFilters] = useState([]);
   const [selectedTripIds, setSelectedTripIds] = useState([]);
   const [focusedTripId, setFocusedTripId] = useState(null);
+  const [isPersonFilterOpen, setIsPersonFilterOpen] = useState(false);
+  const [activeTab, setActiveTab] = useState("log");
+  const [routeQuery, setRouteQuery] = useState("");
+  const [routeResults, setRouteResults] = useState([]);
+  const [routeSearching, setRouteSearching] = useState(false);
+  const personFilterRef = useRef(null);
 
   const loadTrips = async (searchText = "") => {
     setLoading(true);
@@ -216,14 +262,22 @@ export default function App() {
   }, [peopleProfiles, trips]);
 
   const filteredTrips = useMemo(() => {
-    if (personFilter === "all") return trips;
-    return trips.filter((trip) => (trip.people || []).includes(personFilter));
-  }, [trips, personFilter]);
+    if (!selectedPeopleFilters.length) return trips;
+    const selectedSet = new Set(selectedPeopleFilters.map(normalizePersonName));
+    return trips.filter((trip) => {
+      const tripPeopleSet = new Set((trip.people || []).map(normalizePersonName));
+      return [...selectedSet].every((selectedName) => tripPeopleSet.has(selectedName));
+    });
+  }, [trips, selectedPeopleFilters]);
 
   const mapCenter = useMemo(() => tripToMapCenter(filteredTrips), [filteredTrips]);
   const displayedTrips = useMemo(() => sortTrips(filteredTrips, sortBy), [filteredTrips, sortBy]);
   const selectedTripIdsSet = useMemo(() => new Set(selectedTripIds), [selectedTripIds]);
   const hasExplicitSelection = selectedTripIds.length > 0;
+  const selectedTrips = useMemo(
+    () => displayedTrips.filter((trip) => selectedTripIdsSet.has(trip.id)),
+    [displayedTrips, selectedTripIdsSet]
+  );
   const focusedTrip = useMemo(
     () => displayedTrips.find((trip) => trip.id === focusedTripId) || null,
     [displayedTrips, focusedTripId]
@@ -234,6 +288,17 @@ export default function App() {
     setSelectedTripIds((prev) => prev.filter((id) => validIds.has(id)));
     setFocusedTripId((prev) => (prev && validIds.has(prev) ? prev : null));
   }, [displayedTrips]);
+
+  useEffect(() => {
+    const handleOutsideClick = (event) => {
+      if (!personFilterRef.current) return;
+      if (!personFilterRef.current.contains(event.target)) {
+        setIsPersonFilterOpen(false);
+      }
+    };
+    document.addEventListener("mousedown", handleOutsideClick);
+    return () => document.removeEventListener("mousedown", handleOutsideClick);
+  }, []);
 
   const toggleTripSelection = (tripId, shouldFocus = true) => {
     setSelectedTripIds((prev) => {
@@ -250,6 +315,14 @@ export default function App() {
       }
       return next;
     });
+  };
+
+  const togglePersonFilter = (personName) => {
+    setSelectedPeopleFilters((prev) =>
+      prev.includes(personName)
+        ? prev.filter((name) => name !== personName)
+        : [...prev, personName]
+    );
   };
 
   const onFormChange = (field) => (event) => {
@@ -286,6 +359,45 @@ export default function App() {
     } catch (err) {
       setError(err.message || "Could not save trip");
     }
+  };
+
+  const searchRouteLocations = async () => {
+    const queryText = routeQuery.trim();
+    if (!queryText) {
+      setRouteResults([]);
+      return;
+    }
+    setRouteSearching(true);
+    setError("");
+    try {
+      const response = await fetch(
+        `https://nominatim.openstreetmap.org/search?format=jsonv2&limit=6&q=${encodeURIComponent(queryText)}`
+      );
+      if (!response.ok) {
+        throw new Error("Location search failed");
+      }
+      const data = await response.json();
+      setRouteResults(Array.isArray(data) ? data : []);
+    } catch (err) {
+      setError(err.message || "Could not search locations");
+      setRouteResults([]);
+    } finally {
+      setRouteSearching(false);
+    }
+  };
+
+  const appendRoutePoint = (result) => {
+    const lat = Number(result.lat);
+    const lng = Number(result.lon);
+    if (Number.isNaN(lat) || Number.isNaN(lng)) return;
+    const label = (result.display_name || "").split(",").slice(0, 2).join(",").trim() || "Stop";
+    const line = `${lat.toFixed(5)},${lng.toFixed(5)},${label}`;
+    setForm((prev) => ({
+      ...prev,
+      route_text: prev.route_text.trim() ? `${prev.route_text.trim()}\n${line}` : line,
+    }));
+    setRouteQuery("");
+    setRouteResults([]);
   };
 
   const onPersonDraftChange = (field) => (event) => {
@@ -357,115 +469,274 @@ export default function App() {
       {error ? <p className="error">{error}</p> : null}
 
       <main className="content-grid">
-        <section className="panel">
-          <h2>Log A Trip</h2>
-          <form className="trip-form" onSubmit={onSubmit}>
-            <label>
-              Trip Name
-              <input value={form.title} onChange={onFormChange("title")} required />
-            </label>
-            <div className="row">
-              <label>
-                Start
-                <input type="date" value={form.start_date} onChange={onFormChange("start_date")} />
-              </label>
-              <label>
-                End
-                <input type="date" value={form.end_date} onChange={onFormChange("end_date")} />
-              </label>
-            </div>
-            <fieldset className="members-fieldset">
-              <legend>Family Members</legend>
-              {!peopleProfiles.length ? <p className="helper-text">Add a profile in Member Profiles to start selecting members.</p> : null}
-              <div className="member-list">
-                {peopleProfiles.map((person) => (
-                  <label key={person.id} className="member-item">
-                    <input
-                      type="checkbox"
-                      checked={form.selected_person_ids.includes(person.id)}
-                      onChange={onTogglePerson(person.id)}
-                    />
-                    <span>
-                      <strong>{person.name}</strong>
-                      {person.relationship ? ` (${person.relationship})` : ""}
-                    </span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <label>
-              Notes
-              <textarea
-                rows={3}
-                value={form.notes}
-                onChange={onFormChange("notes")}
-                placeholder="Highlights, favorite meals, travel tips..."
-              />
-            </label>
-            <label>
-              Route (one per line: lat,lng,label)
-              <textarea
-                rows={5}
-                value={form.route_text}
-                onChange={onFormChange("route_text")}
-                placeholder="34.0522,-118.2437,Los Angeles&#10;36.1699,-115.1398,Las Vegas"
-              />
-            </label>
-            <label>
-              Accommodations (name|location|check_in|check_out|notes)
-              <textarea
-                rows={5}
-                value={form.accommodations_text}
-                onChange={onFormChange("accommodations_text")}
-                placeholder="Sea View Inn|Santa Monica|2026-03-04|2026-03-06|Close to beach"
-              />
-            </label>
-            <button type="submit">Save Trip</button>
-          </form>
-        </section>
-
-        <section className="panel member-panel">
-          <h2>Member Profiles</h2>
-          <div className="member-create-form">
-            <label>
-              Name
-              <input value={personDraft.name} onChange={onPersonDraftChange("name")} />
-            </label>
-            <label>
-              Relationship
-              <input value={personDraft.relationship} onChange={onPersonDraftChange("relationship")} placeholder="Mom, Cousin, Friend" />
-            </label>
-            <label>
-              Notes
-              <input value={personDraft.notes} onChange={onPersonDraftChange("notes")} placeholder="Food allergies, passport reminders..." />
-            </label>
-            <button type="button" onClick={onCreatePersonProfile}>Add Profile</button>
+        <section className="panel left-panel">
+          <div className="tab-nav" role="tablist" aria-label="Travel sections">
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === "log" ? "is-active" : ""}`}
+              onClick={() => setActiveTab("log")}
+            >
+              Log A Trip
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === "trips" ? "is-active" : ""}`}
+              onClick={() => setActiveTab("trips")}
+            >
+              Trips
+            </button>
+            <button
+              type="button"
+              className={`tab-btn ${activeTab === "members" ? "is-active" : ""}`}
+              onClick={() => setActiveTab("members")}
+            >
+              Member Profiles
+            </button>
           </div>
-          <ul className="profile-list">
-            {peopleProfiles.map((person) => (
-              <li key={`profile-${person.id}`}>
-                <div>
-                  <strong>{person.name}</strong>
-                  {person.relationship ? <p>{person.relationship}</p> : null}
+
+          <div className="tab-panel">
+            {activeTab === "log" ? (
+              <>
+                <h2>Log A Trip</h2>
+                <form className="trip-form" onSubmit={onSubmit}>
+                  <label>
+                    Trip Name
+                    <input value={form.title} onChange={onFormChange("title")} required />
+                  </label>
+                  <div className="row">
+                    <label>
+                      Start
+                      <input type="date" value={form.start_date} onChange={onFormChange("start_date")} />
+                    </label>
+                    <label>
+                      End
+                      <input type="date" value={form.end_date} onChange={onFormChange("end_date")} />
+                    </label>
+                  </div>
+                  <fieldset className="members-fieldset">
+                    <legend>Family Members</legend>
+                    {!peopleProfiles.length ? <p className="helper-text">Add a profile in Member Profiles to start selecting members.</p> : null}
+                    <div className="member-list">
+                      {peopleProfiles.map((person) => (
+                        <label key={person.id} className="member-item">
+                          <input
+                            type="checkbox"
+                            checked={form.selected_person_ids.includes(person.id)}
+                            onChange={onTogglePerson(person.id)}
+                          />
+                          <span>
+                            <strong>{person.name}</strong>
+                            {person.relationship ? ` (${person.relationship})` : ""}
+                          </span>
+                        </label>
+                      ))}
+                    </div>
+                  </fieldset>
+                  <label>
+                    Notes
+                    <textarea
+                      rows={3}
+                      value={form.notes}
+                      onChange={onFormChange("notes")}
+                      placeholder="Highlights, favorite meals, travel tips..."
+                    />
+                  </label>
+                  <label>
+                    Route (one per line: lat,lng,label)
+                    <textarea
+                      rows={5}
+                      value={form.route_text}
+                      onChange={onFormChange("route_text")}
+                      placeholder="34.0522,-118.2437,Los Angeles&#10;36.1699,-115.1398,Las Vegas"
+                    />
+                  </label>
+                  <div className="route-search-box">
+                    <div className="route-search-form">
+                      <input
+                        value={routeQuery}
+                        onChange={(event) => setRouteQuery(event.target.value)}
+                        placeholder="Search location (e.g., Seattle Space Needle)"
+                        onKeyDown={(event) => {
+                          if (event.key === "Enter") {
+                            event.preventDefault();
+                            searchRouteLocations();
+                          }
+                        }}
+                      />
+                      <button type="button" onClick={searchRouteLocations}>
+                        {routeSearching ? "Searching..." : "Find"}
+                      </button>
+                    </div>
+                    {routeResults.length ? (
+                      <ul className="route-results">
+                        {routeResults.map((result) => (
+                          <li key={result.place_id}>
+                            <button type="button" onClick={() => appendRoutePoint(result)}>
+                              {result.display_name}
+                            </button>
+                          </li>
+                        ))}
+                      </ul>
+                    ) : null}
+                  </div>
+                  <label>
+                    Accommodations (name|location|check_in|check_out|notes)
+                    <textarea
+                      rows={5}
+                      value={form.accommodations_text}
+                      onChange={onFormChange("accommodations_text")}
+                      placeholder="Sea View Inn|Santa Monica|2026-03-04|2026-03-06|Close to beach"
+                    />
+                  </label>
+                  <button type="submit">Save Trip</button>
+                </form>
+              </>
+            ) : null}
+
+            {activeTab === "trips" ? (
+              <>
+                <div className="trips-header">
+                  <h2>Trips</h2>
+                  <div className="trips-controls">
+                    <div className="person-filter-menu" ref={personFilterRef}>
+                      <button
+                        type="button"
+                        className="person-filter-trigger"
+                        onClick={() => setIsPersonFilterOpen((prev) => !prev)}
+                      >
+                        <span>Person</span>
+                        <span className="person-filter-count">
+                          {selectedPeopleFilters.length ? `${selectedPeopleFilters.length} selected` : "All people"}
+                        </span>
+                      </button>
+                      {isPersonFilterOpen ? (
+                        <div className="person-filter-list">
+                          <button type="button" onClick={() => setSelectedPeopleFilters([])}>Clear</button>
+                          {peopleFilterOptions.map((name) => (
+                            <label key={`person-filter-${name}`} className="person-filter-item">
+                              <input
+                                type="checkbox"
+                                checked={selectedPeopleFilters.includes(name)}
+                                onChange={() => togglePersonFilter(name)}
+                              />
+                              <span>{name}</span>
+                            </label>
+                          ))}
+                        </div>
+                      ) : null}
+                    </div>
+                    <label className="sort-control">
+                      Sort
+                      <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
+                        <option value="date_desc">Date (newest first)</option>
+                        <option value="date_asc">Date (oldest first)</option>
+                        <option value="name_asc">Trip name (A-Z)</option>
+                        <option value="name_desc">Trip name (Z-A)</option>
+                      </select>
+                    </label>
+                  </div>
                 </div>
-                <button type="button" onClick={() => onDeletePersonProfile(person.id)}>Remove</button>
-              </li>
-            ))}
-          </ul>
+                {loading ? <p>Loading...</p> : null}
+                {!loading && !displayedTrips.length ? <p>No trips yet.</p> : null}
+                <ul className="trip-list">
+                  {displayedTrips.map((trip) => (
+                    <li
+                      key={trip.id}
+                      className={selectedTripIdsSet.has(trip.id) ? "is-selected" : ""}
+                      onClick={() => toggleTripSelection(trip.id)}
+                      role="button"
+                      tabIndex={0}
+                      onKeyDown={(event) => {
+                        if (event.key === "Enter" || event.key === " ") {
+                          event.preventDefault();
+                          toggleTripSelection(trip.id);
+                        }
+                      }}
+                    >
+                      <div className="trip-header">
+                        <h3>{trip.title}</h3>
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onDelete(trip.id);
+                          }}
+                        >
+                          Delete
+                        </button>
+                      </div>
+                      <p>
+                        {trip.start_date || "Unknown start"} - {trip.end_date || "Unknown end"}
+                      </p>
+                      <p>{trip.notes}</p>
+                      {trip.people?.length ? <p><strong>People:</strong> {trip.people.join(", ")}</p> : null}
+                      {trip.accommodations?.length ? (
+                        <p>
+                          <strong>Stays:</strong>{" "}
+                          {trip.accommodations.map((a) => `${a.name} (${a.location || "N/A"})`).join("; ")}
+                        </p>
+                      ) : null}
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+
+            {activeTab === "members" ? (
+              <>
+                <h2>Member Profiles</h2>
+                <div className="member-create-form">
+                  <label>
+                    Name
+                    <input value={personDraft.name} onChange={onPersonDraftChange("name")} />
+                  </label>
+                  <label>
+                    Relationship
+                    <input value={personDraft.relationship} onChange={onPersonDraftChange("relationship")} placeholder="Mom, Cousin, Friend" />
+                  </label>
+                  <label>
+                    Notes
+                    <input value={personDraft.notes} onChange={onPersonDraftChange("notes")} placeholder="Food allergies, passport reminders..." />
+                  </label>
+                  <button type="button" onClick={onCreatePersonProfile}>Add Profile</button>
+                </div>
+                <ul className="profile-list">
+                  {peopleProfiles.map((person) => (
+                    <li key={`profile-${person.id}`}>
+                      <div>
+                        <strong>{person.name}</strong>
+                        {person.relationship ? <p>{person.relationship}</p> : null}
+                      </div>
+                      <button type="button" onClick={() => onDeletePersonProfile(person.id)}>Remove</button>
+                    </li>
+                  ))}
+                </ul>
+              </>
+            ) : null}
+          </div>
         </section>
 
         <section className="panel map-panel">
           <h2>Travel Map</h2>
-          <MapContainer center={mapCenter} zoom={4} scrollWheelZoom className="map-view">
-            <MapFocus selectedTrip={focusedTrip} />
+          <MapContainer
+            center={mapCenter}
+            zoom={4}
+            minZoom={2}
+            maxBounds={[[-85, -180], [85, 180]]}
+            maxBoundsViscosity={1}
+            scrollWheelZoom
+            className="map-view"
+          >
+            <MapFocus selectedTrips={selectedTrips.length ? selectedTrips : focusedTrip ? [focusedTrip] : []} />
             <TileLayer
               attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
               url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              noWrap
+              bounds={[[-85, -180], [85, 180]]}
             />
             {displayedTrips.map((trip) => {
               const isSelected = selectedTripIdsSet.has(trip.id);
               const shouldHighlight = !hasExplicitSelection || isSelected;
-              const showTripLabel = !hasExplicitSelection || isSelected;
               const coords = (trip.route || []).map((point) => [point.lat, point.lng]);
               return (
                 <Fragment key={trip.id}>
@@ -492,7 +763,6 @@ export default function App() {
                           click: () => toggleTripSelection(trip.id),
                         }}
                       >
-                        {showTripLabel && idx === 0 ? <Tooltip permanent direction="top">{trip.title}</Tooltip> : null}
                         <Popup>
                           <TripPopupContent trip={trip} stopLabel={point.label || "Stop"} />
                         </Popup>
@@ -512,74 +782,6 @@ export default function App() {
           </MapContainer>
         </section>
 
-        <section className="panel list-panel">
-          <div className="trips-header">
-            <h2>Trips</h2>
-            <div className="trips-controls">
-              <label className="sort-control">
-                Person
-                <select value={personFilter} onChange={(e) => setPersonFilter(e.target.value)}>
-                  <option value="all">All people</option>
-                  {peopleFilterOptions.map((name) => (
-                    <option key={`person-filter-${name}`} value={name}>{name}</option>
-                  ))}
-                </select>
-              </label>
-              <label className="sort-control">
-                Sort
-                <select value={sortBy} onChange={(e) => setSortBy(e.target.value)}>
-                  <option value="date_desc">Date (newest first)</option>
-                  <option value="date_asc">Date (oldest first)</option>
-                  <option value="name_asc">Trip name (A-Z)</option>
-                  <option value="name_desc">Trip name (Z-A)</option>
-                </select>
-              </label>
-            </div>
-          </div>
-          {loading ? <p>Loading...</p> : null}
-          {!loading && !displayedTrips.length ? <p>No trips yet.</p> : null}
-          <ul className="trip-list">
-            {displayedTrips.map((trip) => (
-              <li
-                key={trip.id}
-                className={selectedTripIdsSet.has(trip.id) ? "is-selected" : ""}
-                onClick={() => toggleTripSelection(trip.id)}
-                role="button"
-                tabIndex={0}
-                onKeyDown={(event) => {
-                  if (event.key === "Enter" || event.key === " ") {
-                    event.preventDefault();
-                    toggleTripSelection(trip.id);
-                  }
-                }}
-              >
-                <div className="trip-header">
-                  <h3>{trip.title}</h3>
-                  <button
-                    type="button"
-                    onClick={(event) => {
-                      event.stopPropagation();
-                      onDelete(trip.id);
-                    }}
-                  >
-                    Delete
-                  </button>
-                </div>
-                <p>
-                  {trip.start_date || "Unknown start"} - {trip.end_date || "Unknown end"}
-                </p>
-                <p>{trip.notes}</p>
-                {trip.people?.length ? <p><strong>People:</strong> {trip.people.join(", ")}</p> : null}
-                {trip.accommodations?.length ? (
-                  <p>
-                    <strong>Stays:</strong>{" "}
-                    {trip.accommodations.map((a) => `${a.name} (${a.location || "N/A"})`).join("; ")}
-                  </p>
-                ) : null}
-              </li>
-            ))}
-          </ul>
-        </section>
       </main>
     </div>
   );
