@@ -54,6 +54,43 @@ class PersonProfileCreate(PersonProfileBase):
     pass
 
 
+class PersonProfileUpdate(PersonProfileBase):
+    pass
+
+
 class PersonProfile(PersonProfileBase):
     id: int
     created_at: datetime
+
+
+class PackingTemplateBase(BaseModel):
+    name: str = Field(min_length=1, max_length=120)
+    items: list[str] = Field(default_factory=list)
+
+
+class PackingTemplateCreate(PackingTemplateBase):
+    pass
+
+
+class PackingTemplateUpdate(PackingTemplateBase):
+    pass
+
+
+class PackingTemplate(PackingTemplateBase):
+    id: int
+    created_at: datetime
+    updated_at: datetime
+
+
+class UserRegister(BaseModel):
+    user_id: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
+    password: str = Field(min_length=8, max_length=120)
+
+
+class UserLogin(UserRegister):
+    pass
+
+
+class AuthToken(BaseModel):
+    token: str
+    user_id: str
