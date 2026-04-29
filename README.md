@@ -37,6 +37,10 @@ uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 
 API base URL: `http://127.0.0.1:8000`
 
+Health checks:
+- `GET /health` basic API liveness
+- `GET /health/db` DB connectivity check (returns active DB mode: `sqlite` or `postgres`)
+
 ## Database
 
 The backend uses SQLite locally when `DATABASE_URL` is not set. For cloud deployment, set `DATABASE_URL` to a hosted Postgres connection string, for example:
@@ -46,6 +50,21 @@ DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE
 ```
 
 On startup, the backend creates the required tables and indexes in Postgres.
+
+## Security and session config
+
+Set these backend environment variables for deployment:
+
+```bash
+FRONTEND_ORIGINS=https://your-frontend-domain.vercel.app
+SESSION_TTL_DAYS=30
+```
+
+`FRONTEND_ORIGINS` supports comma-separated values for multiple domains, for example:
+
+```bash
+FRONTEND_ORIGINS=https://your-app.vercel.app,https://your-app.netlify.app
+```
 
 ## Optional seed user
 
@@ -70,6 +89,14 @@ set DATABASE_URL=postgresql://USER:PASSWORD@HOST:PORT/DATABASE
 .\.venv\Scripts\python.exe migrate_sqlite_to_postgres.py
 ```
 
+Recommended migration order for production:
+
+1. Create hosted Postgres (Neon/Supabase).
+2. Set `DATABASE_URL` locally to that hosted database.
+3. Run `migrate_sqlite_to_postgres.py` once.
+4. Set the same `DATABASE_URL` in Render and deploy backend.
+5. Deploy frontend with `VITE_API_BASE_URL` set to Render API URL.
+
 ## Frontend setup
 
 ```bash
@@ -80,8 +107,9 @@ npm run dev
 
 Frontend URL: `http://127.0.0.1:5173`
 
-The frontend calls `http://127.0.0.1:8000` by default. Override with:
+For local development, frontend falls back to `http://127.0.0.1:8000`.  
+For deployed frontend builds (Vercel/Netlify), you must set:
 
 ```bash
-set VITE_API_BASE_URL=http://127.0.0.1:8000
+VITE_API_BASE_URL=https://your-render-service.onrender.com
 ```

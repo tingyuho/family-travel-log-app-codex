@@ -1,4 +1,11 @@
-const API_BASE = import.meta.env.VITE_API_BASE_URL || "http://127.0.0.1:8000";
+function resolveApiBase() {
+  const configured = (import.meta.env.VITE_API_BASE_URL || "").trim();
+  if (configured) return configured.replace(/\/+$/, "");
+  if (import.meta.env.DEV) return "http://127.0.0.1:8000";
+  return "";
+}
+
+const API_BASE = resolveApiBase();
 
 let authToken = localStorage.getItem("travel_log_token") || "";
 let currentUserId = localStorage.getItem("travel_log_user_id") || "";
@@ -27,6 +34,10 @@ export function clearAuthState() {
 }
 
 async function request(path, options = {}) {
+  if (!API_BASE) {
+    throw new Error("Missing VITE_API_BASE_URL in this deployed frontend build");
+  }
+
   const headers = {
     "Content-Type": "application/json",
     ...(options.headers || {}),
@@ -58,6 +69,10 @@ export async function login(payload) {
   });
   setAuthState(data.token, data.user_id);
   return data;
+}
+
+export function logout() {
+  return request("/api/auth/logout", { method: "POST" });
 }
 
 export async function register(payload) {

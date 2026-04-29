@@ -23,6 +23,7 @@ import {
   fetchTrips,
   getAuthState,
   login,
+  logout,
   register,
   updatePackingTemplate,
   updatePeopleProfile,
@@ -1146,7 +1147,12 @@ export default function App() {
     }
   };
 
-  const onLogout = () => {
+  const onLogout = async () => {
+    try {
+      await logout();
+    } catch (_err) {
+      // Token may already be expired/revoked; continue local logout cleanup.
+    }
     clearAuthState();
     setAuthReady(false);
     setCurrentUserId("");

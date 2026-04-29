@@ -1,9 +1,11 @@
 from __future__ import annotations
 
+import os
+
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
-from .db import DatabaseIntegrityError, init_db
+from .db import DatabaseIntegrityError, get_connection, init_db, is_postgres
 from .repository import (
     authenticate_user,
     create_person_profile,
@@ -19,6 +21,7 @@ from .repository import (
     list_packing_templates,
     list_people_profiles,
     list_trips,
+    revoke_session,
     update_packing_template,
     update_person_profile,
     update_trip,
@@ -41,9 +44,16 @@ from .schemas import (
 
 app = FastAPI(title="Family Travel Log API", version="2.0.0")
 
+
+def _cors_origins() -> list[str]:
+    configured = [origin.strip() for origin in os.getenv("FRONTEND_ORIGINS", "").split(",") if origin.strip()]
+    if configured:
+        return configured
+    return ["http://127.0.0.1:5173", "http://localhost:5173"]
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_cors_origins(),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -70,6 +80,16 @@ def health() -> dict[str, str]:
     return {"status": "ok"}
 
 
+@app.get("/health/db")
+def health_db() -> dict[str, str]:
+    try:
+        with get_connection() as conn:
+            conn.execute("SELECT 1")
+    except Exception as exc:
+        raise HTTPException(status_code=status.HTTP_503_SERVICE_UNAVAILABLE, detail=f"DB check failed: {exc}") from exc
+    return {"status": "ok", "database": "postgres" if is_postgres() else "sqlite"}
+
+
 @app.post("/api/auth/register", response_model=AuthToken, status_code=status.HTTP_201_CREATED)
 def register(payload: UserRegister) -> AuthToken:
     created = create_user(payload.user_id.strip(), payload.password)
@@ -91,6 +111,15 @@ def login(payload: UserLogin) -> AuthToken:
 @app.get("/api/auth/me")
 def me(current_user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
     return {"user_id": current_user_id}
+
+
+@app.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)
+def logout(authorization: str | None = Header(default=None)) -> Response:
+    if not authorization or not authorization.lower().startswith("bearer "):
+        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Missing bearer token")
+    token = authorization.split(" ", 1)[1].strip()
+    revoke_session(token)
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/api/trips", response_model=list[Trip])

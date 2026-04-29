@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from .auth import generate_token, hash_password, password_needs_rehash, verify_password
-from .db import get_connection, is_postgres
+from .db import SESSION_TTL_DAYS, get_connection, is_postgres
 from .schemas import (
     PackingTemplate,
     PackingTemplateCreate,
@@ -365,23 +366,32 @@ def authenticate_user(user_id: str, password: str) -> bool:
 
 def create_session(user_id: str) -> str:
     token = generate_token()
+    expires_at = datetime.now(UTC) + timedelta(days=SESSION_TTL_DAYS)
+    expires_value = expires_at.isoformat() if is_postgres() else expires_at.strftime("%Y-%m-%d %H:%M:%S")
     with get_connection() as conn:
         conn.execute(
             """
-            INSERT INTO user_sessions (token, user_id)
-            VALUES (?, ?)
+            INSERT INTO user_sessions (token, user_id, expires_at)
+            VALUES (?, ?, ?)
             """,
-            (token, user_id),
+            (token, user_id, expires_value),
         )
     return token
 
 
 def get_user_by_token(token: str) -> str | None:
     with get_connection() as conn:
+        conn.execute("DELETE FROM user_sessions WHERE expires_at <= CURRENT_TIMESTAMP")
         row = conn.execute(
-            "SELECT user_id FROM user_sessions WHERE token = ?",
+            "SELECT user_id FROM user_sessions WHERE token = ? AND expires_at > CURRENT_TIMESTAMP",
             (token,),
         ).fetchone()
     if row is None:
         return None
     return row["user_id"]
+
+
+def revoke_session(token: str) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute("DELETE FROM user_sessions WHERE token = ?", (token,))
+    return cursor.rowcount > 0

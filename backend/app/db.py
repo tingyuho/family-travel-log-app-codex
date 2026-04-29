@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 import sqlite3
 from collections.abc import Iterable
+from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,7 @@ DATABASE_URL = os.getenv("DATABASE_URL", "")
 SEED_USER_ID = os.getenv("SEED_USER_ID", "").strip()
 SEED_USER_PASSWORD = os.getenv("SEED_USER_PASSWORD", "")
 SEED_CLAIM_LEGACY_RECORDS = os.getenv("SEED_CLAIM_LEGACY_RECORDS", "false").lower() == "true"
+SESSION_TTL_DAYS = max(int(os.getenv("SESSION_TTL_DAYS", "30")), 1)
 DatabaseIntegrityError = (sqlite3.IntegrityError,) + (
     (psycopg.IntegrityError,) if psycopg is not None else ()
 )
@@ -252,6 +254,32 @@ def init_db() -> None:
             conn.execute("ALTER TABLE people_profiles ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
         if not _has_column(conn, "packing_templates", "user_id"):
             conn.execute("ALTER TABLE packing_templates ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        if not _has_column(conn, "user_sessions", "expires_at"):
+            if is_postgres():
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN expires_at TIMESTAMPTZ")
+            else:
+                conn.execute("ALTER TABLE user_sessions ADD COLUMN expires_at TEXT")
+
+        # Backfill session expiration for legacy rows.
+        if is_postgres():
+            conn.execute(
+                """
+                UPDATE user_sessions
+                SET expires_at = created_at + (? * INTERVAL '1 day')
+                WHERE expires_at IS NULL
+                """,
+                (SESSION_TTL_DAYS,),
+            )
+        else:
+            fallback_expiry = (datetime.now(UTC) + timedelta(days=SESSION_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
+            conn.execute(
+                """
+                UPDATE user_sessions
+                SET expires_at = ?
+                WHERE expires_at IS NULL
+                """,
+                (fallback_expiry,),
+            )
 
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_people_profiles_user_name ON people_profiles(user_id, name)"
@@ -262,5 +290,7 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user ON trips(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_profiles_user ON people_profiles(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_packing_templates_user ON packing_templates(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)")
 
         _seed_user(conn)
