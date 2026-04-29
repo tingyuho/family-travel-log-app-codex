@@ -91,6 +91,12 @@ class UserLogin(UserRegister):
     pass
 
 
+class PasswordResetRequest(BaseModel):
+    user_id: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
+    new_password: str = Field(min_length=8, max_length=120)
+    reset_key: str = Field(default="", max_length=120)
+
+
 class AuthToken(BaseModel):
     token: str
     user_id: str

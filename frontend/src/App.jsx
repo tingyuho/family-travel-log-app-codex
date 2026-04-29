@@ -25,6 +25,7 @@ import {
   login,
   logout,
   register,
+  resetPassword,
   updatePackingTemplate,
   updatePeopleProfile,
   updateTrip,
@@ -583,6 +584,13 @@ export default function App() {
   const [currentUserId, setCurrentUserId] = useState("");
   const [authMode, setAuthMode] = useState("login");
   const [authForm, setAuthForm] = useState({ user_id: "", password: "" });
+  const [resetForm, setResetForm] = useState({
+    user_id: "",
+    new_password: "",
+    confirm_password: "",
+    reset_key: "",
+  });
+  const [authNotice, setAuthNotice] = useState("");
   const [query, setQuery] = useState("");
   const [form, setForm] = useState(createEmptyForm);
   const [personDraft, setPersonDraft] = useState({
@@ -1128,6 +1136,7 @@ export default function App() {
   const onAuthSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    setAuthNotice("");
     try {
       const payload = {
         user_id: authForm.user_id.trim(),
@@ -1144,6 +1153,32 @@ export default function App() {
       setAuthForm({ user_id: "", password: "" });
     } catch (err) {
       setError(err.message || "Authentication failed");
+    }
+  };
+
+  const onResetFormChange = (field) => (event) => {
+    setResetForm((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const onResetPasswordSubmit = async (event) => {
+    event.preventDefault();
+    setError("");
+    setAuthNotice("");
+    if (resetForm.new_password !== resetForm.confirm_password) {
+      setError("New password and confirm password must match");
+      return;
+    }
+    try {
+      await resetPassword({
+        user_id: resetForm.user_id.trim(),
+        new_password: resetForm.new_password,
+        reset_key: resetForm.reset_key.trim(),
+      });
+      setResetForm({ user_id: "", new_password: "", confirm_password: "", reset_key: "" });
+      setAuthMode("login");
+      setAuthNotice("Password reset complete. Please log in with your new password.");
+    } catch (err) {
+      setError(err.message || "Could not reset password");
     }
   };
 
@@ -1173,30 +1208,102 @@ export default function App() {
           <h1>Family Travel Log</h1>
         </header>
         {error ? <p className="error">{error}</p> : null}
+        {authNotice ? <p className="helper-text">{authNotice}</p> : null}
         <main className="auth-wrap">
           <section className="panel auth-panel">
-            <h2>{authMode === "login" ? "Sign In" : "Create Account"}</h2>
-            <form className="trip-form" onSubmit={onAuthSubmit}>
-              <label>
-                User ID
-                <input value={authForm.user_id} onChange={onAuthFormChange("user_id")} required />
-              </label>
-              <label>
-                Password
-                <input type="password" value={authForm.password} onChange={onAuthFormChange("password")} required />
-              </label>
-              <button type="submit">{authMode === "login" ? "Log In" : "Create Account"}</button>
-            </form>
-            <p className="helper-text">
-              {authMode === "login" ? "Need a new account?" : "Already have an account?"}{" "}
-              <button
-                type="button"
-                className="link-button"
-                onClick={() => setAuthMode((prev) => (prev === "login" ? "register" : "login"))}
-              >
-                {authMode === "login" ? "Create one" : "Log in"}
-              </button>
-            </p>
+            <h2>{authMode === "reset" ? "Reset Password" : authMode === "login" ? "Sign In" : "Create Account"}</h2>
+            {authMode !== "reset" ? (
+              <>
+                <form className="trip-form" onSubmit={onAuthSubmit}>
+                  <label>
+                    User ID
+                    <input value={authForm.user_id} onChange={onAuthFormChange("user_id")} required />
+                  </label>
+                  <label>
+                    Password
+                    <input type="password" value={authForm.password} onChange={onAuthFormChange("password")} required />
+                  </label>
+                  <button type="submit">{authMode === "login" ? "Log In" : "Create Account"}</button>
+                </form>
+                <p className="helper-text">
+                  {authMode === "login" ? "Need a new account?" : "Already have an account?"}{" "}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      setAuthNotice("");
+                      setAuthMode((prev) => (prev === "login" ? "register" : "login"));
+                    }}
+                  >
+                    {authMode === "login" ? "Create one" : "Log in"}
+                  </button>
+                </p>
+                {authMode === "login" ? (
+                  <p className="helper-text">
+                    Forgot your password?{" "}
+                    <button
+                      type="button"
+                      className="link-button"
+                      onClick={() => {
+                        setError("");
+                        setAuthNotice("");
+                        setAuthMode("reset");
+                      }}
+                    >
+                      Reset it
+                    </button>
+                  </p>
+                ) : null}
+              </>
+            ) : (
+              <>
+                <form className="trip-form" onSubmit={onResetPasswordSubmit}>
+                  <label>
+                    User ID
+                    <input value={resetForm.user_id} onChange={onResetFormChange("user_id")} required />
+                  </label>
+                  <label>
+                    New Password
+                    <input
+                      type="password"
+                      value={resetForm.new_password}
+                      onChange={onResetFormChange("new_password")}
+                      minLength={8}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Confirm New Password
+                    <input
+                      type="password"
+                      value={resetForm.confirm_password}
+                      onChange={onResetFormChange("confirm_password")}
+                      minLength={8}
+                      required
+                    />
+                  </label>
+                  <label>
+                    Reset Key (if configured)
+                    <input value={resetForm.reset_key} onChange={onResetFormChange("reset_key")} />
+                  </label>
+                  <button type="submit">Reset Password</button>
+                </form>
+                <p className="helper-text">
+                  Remembered your password?{" "}
+                  <button
+                    type="button"
+                    className="link-button"
+                    onClick={() => {
+                      setError("");
+                      setAuthNotice("");
+                      setAuthMode("login");
+                    }}
+                  >
+                    Back to log in
+                  </button>
+                </p>
+              </>
+            )}
           </section>
         </main>
       </div>

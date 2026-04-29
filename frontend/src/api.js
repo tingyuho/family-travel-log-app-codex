@@ -88,6 +88,13 @@ export function fetchMe() {
   return request("/api/auth/me");
 }
 
+export function resetPassword(payload) {
+  return request("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function fetchTrips(query = "") {
   const suffix = query ? `?q=${encodeURIComponent(query)}` : "";
   return request(`/api/trips${suffix}`);

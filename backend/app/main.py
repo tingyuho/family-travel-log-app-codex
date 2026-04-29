@@ -21,6 +21,7 @@ from .repository import (
     list_packing_templates,
     list_people_profiles,
     list_trips,
+    reset_user_password,
     revoke_session,
     update_packing_template,
     update_person_profile,
@@ -31,6 +32,7 @@ from .schemas import (
     PackingTemplate,
     PackingTemplateCreate,
     PackingTemplateUpdate,
+    PasswordResetRequest,
     PersonProfile,
     PersonProfileCreate,
     PersonProfileUpdate,
@@ -43,6 +45,7 @@ from .schemas import (
 
 
 app = FastAPI(title="Family Travel Log API", version="2.0.0")
+PASSWORD_RESET_KEY = os.getenv("PASSWORD_RESET_KEY", "").strip()
 
 
 def _cors_origins() -> list[str]:
@@ -106,6 +109,16 @@ def login(payload: UserLogin) -> AuthToken:
         raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Invalid username or password")
     token = create_session(user_id)
     return AuthToken(token=token, user_id=user_id)
+
+
+@app.post("/api/auth/reset-password", status_code=status.HTTP_204_NO_CONTENT)
+def reset_password(payload: PasswordResetRequest) -> Response:
+    if PASSWORD_RESET_KEY and payload.reset_key.strip() != PASSWORD_RESET_KEY:
+        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid reset key")
+    updated = reset_user_password(payload.user_id.strip(), payload.new_password)
+    if not updated:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
 @app.get("/api/auth/me")

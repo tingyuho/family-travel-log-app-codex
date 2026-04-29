@@ -66,6 +66,14 @@ SESSION_TTL_DAYS=30
 FRONTEND_ORIGINS=https://your-app.vercel.app,https://your-app.netlify.app
 ```
 
+Optional password-reset hardening:
+
+```bash
+PASSWORD_RESET_KEY=your-private-reset-key
+```
+
+If `PASSWORD_RESET_KEY` is set, users must provide the same key in the reset form to complete a password reset.
+
 ## Optional seed user
 
 The app does not create a default user by default. To create one intentionally, set both seed variables before starting the backend:

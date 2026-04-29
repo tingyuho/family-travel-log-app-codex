@@ -364,6 +364,18 @@ def authenticate_user(user_id: str, password: str) -> bool:
         return True
 
 
+def reset_user_password(user_id: str, new_password: str) -> bool:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET password_hash = ? WHERE user_id = ?",
+            (hash_password(new_password), user_id),
+        )
+        if cursor.rowcount == 0:
+            return False
+        conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
+        return True
+
+
 def create_session(user_id: str) -> str:
     token = generate_token()
     expires_at = datetime.now(UTC) + timedelta(days=SESSION_TTL_DAYS)
