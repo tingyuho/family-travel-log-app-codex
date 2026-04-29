@@ -84,19 +84,43 @@ class PackingTemplate(PackingTemplateBase):
 
 class UserRegister(BaseModel):
     user_id: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
+    email: str = Field(
+        min_length=5,
+        max_length=254,
+        pattern=r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$",
+    )
     password: str = Field(min_length=8, max_length=120)
 
 
-class UserLogin(UserRegister):
-    pass
+class UserLogin(BaseModel):
+    user_id: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
+    password: str = Field(min_length=8, max_length=120)
 
 
 class PasswordResetRequest(BaseModel):
     user_id: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
     new_password: str = Field(min_length=8, max_length=120)
+    email_code: str = Field(min_length=4, max_length=12)
     reset_key: str = Field(default="", max_length=120)
 
 
 class AuthToken(BaseModel):
     token: str
     user_id: str
+
+
+class PasswordResetEmailRequest(BaseModel):
+    user_id: str = Field(min_length=3, max_length=40, pattern=r"^[A-Za-z0-9_\-]+$")
+
+
+class UserProfile(BaseModel):
+    user_id: str
+    email: str
+
+
+class UserProfileUpdate(BaseModel):
+    email: str = Field(
+        min_length=5,
+        max_length=254,
+        pattern=r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$",
+    )

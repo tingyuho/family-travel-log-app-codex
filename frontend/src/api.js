@@ -88,8 +88,22 @@ export function fetchMe() {
   return request("/api/auth/me");
 }
 
+export function updateMyProfile(payload) {
+  return request("/api/auth/me", {
+    method: "PUT",
+    body: JSON.stringify(payload),
+  });
+}
+
 export function resetPassword(payload) {
   return request("/api/auth/reset-password", {
+    method: "POST",
+    body: JSON.stringify(payload),
+  });
+}
+
+export function requestPasswordReset(payload) {
+  return request("/api/auth/request-password-reset", {
     method: "POST",
     body: JSON.stringify(payload),
   });

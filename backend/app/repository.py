@@ -4,8 +4,15 @@ import json
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from .auth import generate_token, hash_password, password_needs_rehash, verify_password
-from .db import SESSION_TTL_DAYS, get_connection, is_postgres
+from .auth import (
+    generate_token,
+    hash_password,
+    hash_reset_code,
+    password_needs_rehash,
+    verify_password,
+    verify_reset_code,
+)
+from .db import PASSWORD_RESET_CODE_TTL_MINUTES, SESSION_TTL_DAYS, get_connection, is_postgres
 from .schemas import (
     PackingTemplate,
     PackingTemplateCreate,
@@ -16,6 +23,7 @@ from .schemas import (
     Trip,
     TripCreate,
     TripUpdate,
+    UserProfile,
 )
 
 
@@ -323,24 +331,24 @@ def delete_packing_template(user_id: str, template_id: int) -> bool:
     return cursor.rowcount > 0
 
 
-def create_user(user_id: str, password: str) -> bool:
+def create_user(user_id: str, email: str, password: str) -> bool:
     with get_connection() as conn:
         if is_postgres():
             cursor = conn.execute(
                 """
-                INSERT INTO users (user_id, password_hash)
-                VALUES (?, ?)
+                INSERT INTO users (user_id, email, password_hash)
+                VALUES (?, ?, ?)
                 ON CONFLICT (user_id) DO NOTHING
                 """,
-                (user_id, hash_password(password)),
+                (user_id, email, hash_password(password)),
             )
         else:
             cursor = conn.execute(
                 """
-                INSERT OR IGNORE INTO users (user_id, password_hash)
-                VALUES (?, ?)
+                INSERT OR IGNORE INTO users (user_id, email, password_hash)
+                VALUES (?, ?, ?)
                 """,
-                (user_id, hash_password(password)),
+                (user_id, email, hash_password(password)),
             )
     return cursor.rowcount > 0
 
@@ -374,6 +382,85 @@ def reset_user_password(user_id: str, new_password: str) -> bool:
             return False
         conn.execute("DELETE FROM user_sessions WHERE user_id = ?", (user_id,))
         return True
+
+
+def create_password_reset_code(user_id: str, code: str) -> str | None:
+    with get_connection() as conn:
+        user_row = conn.execute(
+            "SELECT email FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+        if user_row is None:
+            return None
+
+        email = (user_row["email"] or "").strip()
+        if not email:
+            return None
+
+        expires_at = datetime.now(UTC) + timedelta(minutes=PASSWORD_RESET_CODE_TTL_MINUTES)
+        expires_value = expires_at.isoformat() if is_postgres() else expires_at.strftime("%Y-%m-%d %H:%M:%S")
+
+        conn.execute("DELETE FROM password_reset_codes WHERE expires_at <= CURRENT_TIMESTAMP")
+        if is_postgres():
+            conn.execute(
+                """
+                INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT (user_id)
+                DO UPDATE SET code_hash = EXCLUDED.code_hash, expires_at = EXCLUDED.expires_at, created_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, hash_reset_code(code), expires_value),
+            )
+        else:
+            conn.execute(
+                """
+                INSERT INTO password_reset_codes (user_id, code_hash, expires_at)
+                VALUES (?, ?, ?)
+                ON CONFLICT(user_id)
+                DO UPDATE SET code_hash = excluded.code_hash, expires_at = excluded.expires_at, created_at = CURRENT_TIMESTAMP
+                """,
+                (user_id, hash_reset_code(code), expires_value),
+            )
+        return email
+
+
+def consume_password_reset_code(user_id: str, code: str) -> bool:
+    with get_connection() as conn:
+        conn.execute("DELETE FROM password_reset_codes WHERE expires_at <= CURRENT_TIMESTAMP")
+        row = conn.execute(
+            """
+            SELECT code_hash
+            FROM password_reset_codes
+            WHERE user_id = ? AND expires_at > CURRENT_TIMESTAMP
+            """,
+            (user_id,),
+        ).fetchone()
+        if row is None or not verify_reset_code(code, row["code_hash"]):
+            return False
+        conn.execute("DELETE FROM password_reset_codes WHERE user_id = ?", (user_id,))
+        return True
+
+
+def get_user_profile(user_id: str) -> UserProfile | None:
+    with get_connection() as conn:
+        row = conn.execute(
+            "SELECT user_id, email FROM users WHERE user_id = ?",
+            (user_id,),
+        ).fetchone()
+    if row is None:
+        return None
+    return UserProfile(user_id=row["user_id"], email=row["email"] or "")
+
+
+def update_user_email(user_id: str, email: str) -> UserProfile | None:
+    with get_connection() as conn:
+        cursor = conn.execute(
+            "UPDATE users SET email = ? WHERE user_id = ?",
+            (email, user_id),
+        )
+    if cursor.rowcount == 0:
+        return None
+    return get_user_profile(user_id)
 
 
 def create_session(user_id: str) -> str:

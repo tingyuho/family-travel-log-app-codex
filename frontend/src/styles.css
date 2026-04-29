@@ -67,6 +67,32 @@ h1 {
   padding: 0.35rem 0.55rem;
 }
 
+.user-box .user-name-btn {
+  background: #eef6ff;
+  color: #1f3649;
+  border: 1px solid #c6d8eb;
+}
+
+.user-box .user-name-btn:hover {
+  background: #e1eefb;
+}
+
+.profile-panel {
+  margin-bottom: 0.75rem;
+}
+
+.profile-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  margin-bottom: 0.65rem;
+}
+
+.profile-form {
+  max-width: 520px;
+}
+
 button,
 input,
 textarea,
@@ -96,6 +122,11 @@ button {
 
 button:hover {
   background: #166974;
+}
+
+button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
 }
 
 .error {
@@ -241,6 +272,13 @@ button:hover {
   margin: 0 0 0.5rem;
   font-size: 0.85rem;
   color: #496174;
+}
+
+.form-warning {
+  margin: 0;
+  font-size: 0.84rem;
+  color: #b30e34;
+  font-weight: 600;
 }
 
 .member-list {

@@ -82,3 +82,16 @@ def _legacy_sha256(password: str) -> str:
 
 def generate_token() -> str:
     return secrets.token_urlsafe(32)
+
+
+def generate_reset_code(length: int = 6) -> str:
+    alphabet = "0123456789"
+    return "".join(secrets.choice(alphabet) for _ in range(max(length, 4)))
+
+
+def hash_reset_code(code: str) -> str:
+    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+
+
+def verify_reset_code(code: str, code_hash: str) -> bool:
+    return hmac.compare_digest(hash_reset_code(code), code_hash)

@@ -5,11 +5,15 @@ import os
 from fastapi import Depends, FastAPI, Header, HTTPException, Query, Response, status
 from fastapi.middleware.cors import CORSMiddleware
 
+from .auth import generate_reset_code
 from .db import DatabaseIntegrityError, get_connection, init_db, is_postgres
+from .mailer import is_mailer_configured, send_password_reset_email
 from .repository import (
     authenticate_user,
+    consume_password_reset_code,
     create_person_profile,
     create_packing_template,
+    create_password_reset_code,
     create_session,
     create_trip,
     create_user,
@@ -17,6 +21,7 @@ from .repository import (
     delete_person_profile,
     delete_trip,
     get_trip,
+    get_user_profile,
     get_user_by_token,
     list_packing_templates,
     list_people_profiles,
@@ -26,12 +31,14 @@ from .repository import (
     update_packing_template,
     update_person_profile,
     update_trip,
+    update_user_email,
 )
 from .schemas import (
     AuthToken,
     PackingTemplate,
     PackingTemplateCreate,
     PackingTemplateUpdate,
+    PasswordResetEmailRequest,
     PasswordResetRequest,
     PersonProfile,
     PersonProfileCreate,
@@ -40,6 +47,8 @@ from .schemas import (
     TripCreate,
     TripUpdate,
     UserLogin,
+    UserProfile,
+    UserProfileUpdate,
     UserRegister,
 )
 
@@ -95,7 +104,7 @@ def health_db() -> dict[str, str]:
 
 @app.post("/api/auth/register", response_model=AuthToken, status_code=status.HTTP_201_CREATED)
 def register(payload: UserRegister) -> AuthToken:
-    created = create_user(payload.user_id.strip(), payload.password)
+    created = create_user(payload.user_id.strip(), payload.email.strip().lower(), payload.password)
     if not created:
         raise HTTPException(status_code=status.HTTP_409_CONFLICT, detail="User ID already exists")
     token = create_session(payload.user_id.strip())
@@ -113,17 +122,53 @@ def login(payload: UserLogin) -> AuthToken:
 
 @app.post("/api/auth/reset-password", status_code=status.HTTP_204_NO_CONTENT)
 def reset_password(payload: PasswordResetRequest) -> Response:
-    if PASSWORD_RESET_KEY and payload.reset_key.strip() != PASSWORD_RESET_KEY:
-        raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid reset key")
+    if not consume_password_reset_code(payload.user_id.strip(), payload.email_code.strip()):
+        if PASSWORD_RESET_KEY and payload.reset_key.strip() == PASSWORD_RESET_KEY:
+            pass
+        else:
+            raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Invalid or expired verification code")
     updated = reset_user_password(payload.user_id.strip(), payload.new_password)
     if not updated:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
     return Response(status_code=status.HTTP_204_NO_CONTENT)
 
 
-@app.get("/api/auth/me")
-def me(current_user_id: str = Depends(get_current_user_id)) -> dict[str, str]:
-    return {"user_id": current_user_id}
+@app.post("/api/auth/request-password-reset", status_code=status.HTTP_204_NO_CONTENT)
+def request_password_reset(payload: PasswordResetEmailRequest) -> Response:
+    if not is_mailer_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Email sending is not configured on the server",
+        )
+
+    user_id = payload.user_id.strip()
+    code = generate_reset_code()
+    email = create_password_reset_code(user_id, code)
+    if email:
+        try:
+            send_password_reset_email(email, user_id, code)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail=f"Failed to send reset email: {exc}",
+            ) from exc
+    return Response(status_code=status.HTTP_204_NO_CONTENT)
+
+
+@app.get("/api/auth/me", response_model=UserProfile)
+def me(current_user_id: str = Depends(get_current_user_id)) -> UserProfile:
+    profile = get_user_profile(current_user_id)
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return profile
+
+
+@app.put("/api/auth/me", response_model=UserProfile)
+def update_me(payload: UserProfileUpdate, current_user_id: str = Depends(get_current_user_id)) -> UserProfile:
+    profile = update_user_email(current_user_id, payload.email.strip().lower())
+    if profile is None:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="User not found")
+    return profile
 
 
 @app.post("/api/auth/logout", status_code=status.HTTP_204_NO_CONTENT)

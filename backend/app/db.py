@@ -23,6 +23,7 @@ SEED_USER_ID = os.getenv("SEED_USER_ID", "").strip()
 SEED_USER_PASSWORD = os.getenv("SEED_USER_PASSWORD", "")
 SEED_CLAIM_LEGACY_RECORDS = os.getenv("SEED_CLAIM_LEGACY_RECORDS", "false").lower() == "true"
 SESSION_TTL_DAYS = max(int(os.getenv("SESSION_TTL_DAYS", "30")), 1)
+PASSWORD_RESET_CODE_TTL_MINUTES = max(int(os.getenv("PASSWORD_RESET_CODE_TTL_MINUTES", "15")), 1)
 DatabaseIntegrityError = (sqlite3.IntegrityError,) + (
     (psycopg.IntegrityError,) if psycopg is not None else ()
 )
@@ -87,6 +88,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
             """
             CREATE TABLE IF NOT EXISTS users (
                 user_id TEXT PRIMARY KEY,
+                email TEXT NOT NULL DEFAULT '',
                 password_hash TEXT NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -97,6 +99,17 @@ def _create_tables(conn: DatabaseConnection) -> None:
             CREATE TABLE IF NOT EXISTS user_sessions (
                 token TEXT PRIMARY KEY,
                 user_id TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS password_reset_codes (
+                user_id TEXT PRIMARY KEY,
+                code_hash TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
             )
@@ -149,6 +162,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
         """
         CREATE TABLE IF NOT EXISTS users (
             user_id TEXT PRIMARY KEY,
+            email TEXT NOT NULL DEFAULT '',
             password_hash TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -159,6 +173,17 @@ def _create_tables(conn: DatabaseConnection) -> None:
         CREATE TABLE IF NOT EXISTS user_sessions (
             token TEXT PRIMARY KEY,
             user_id TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS password_reset_codes (
+            user_id TEXT PRIMARY KEY,
+            code_hash TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             FOREIGN KEY(user_id) REFERENCES users(user_id) ON DELETE CASCADE
         )
@@ -250,6 +275,8 @@ def init_db() -> None:
         # Migrate older DBs that didn't have user ownership columns.
         if not _has_column(conn, "trips", "user_id"):
             conn.execute("ALTER TABLE trips ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        if not _has_column(conn, "users", "email"):
+            conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         if not _has_column(conn, "people_profiles", "user_id"):
             conn.execute("ALTER TABLE people_profiles ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
         if not _has_column(conn, "packing_templates", "user_id"):
@@ -292,5 +319,8 @@ def init_db() -> None:
         conn.execute("CREATE INDEX IF NOT EXISTS idx_packing_templates_user ON packing_templates(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)")
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_password_reset_codes_expires_at ON password_reset_codes(expires_at)"
+        )
 
         _seed_user(conn)

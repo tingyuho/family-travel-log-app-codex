@@ -25,9 +25,11 @@ import {
   login,
   logout,
   register,
+  requestPasswordReset,
   resetPassword,
   updatePackingTemplate,
   updatePeopleProfile,
+  updateMyProfile,
   updateTrip,
 } from "./api";
 import "leaflet/dist/leaflet.css";
@@ -297,6 +299,14 @@ function tripToMapCenter(trips) {
 
 function normalizePersonName(name) {
   return (name || "").trim().toLowerCase();
+}
+
+function isInvalidDateRange(startDate, endDate) {
+  return Boolean(startDate && endDate && endDate < startDate);
+}
+
+function isValidEmail(value) {
+  return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test((value || "").trim());
 }
 
 function sortTrips(trips, sortBy) {
@@ -582,10 +592,21 @@ export default function App() {
   const [packingTemplates, setPackingTemplates] = useState([]);
   const [authReady, setAuthReady] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
+  const [isProfileOpen, setIsProfileOpen] = useState(false);
+  const [profileForm, setProfileForm] = useState({ email: "" });
+  const [profileNotice, setProfileNotice] = useState("");
+  const [resetCodeSent, setResetCodeSent] = useState(false);
   const [authMode, setAuthMode] = useState("login");
-  const [authForm, setAuthForm] = useState({ user_id: "", password: "" });
+  const [authForm, setAuthForm] = useState({
+    user_id: "",
+    email: "",
+    password: "",
+    confirm_password: "",
+  });
   const [resetForm, setResetForm] = useState({
     user_id: "",
+    email_code: "",
     new_password: "",
     confirm_password: "",
     reset_key: "",
@@ -664,6 +685,8 @@ export default function App() {
       try {
         const me = await fetchMe();
         setCurrentUserId(me.user_id);
+        setCurrentUserEmail(me.email || "");
+        setProfileForm({ email: me.email || "" });
         setAuthReady(true);
       } catch (_err) {
         clearAuthState();
@@ -776,6 +799,8 @@ export default function App() {
       route,
     };
   }, [tripEdit]);
+  const createDateRangeInvalid = isInvalidDateRange(form.start_date, form.end_date);
+  const editDateRangeInvalid = isInvalidDateRange(tripEdit?.start_date, tripEdit?.end_date);
 
   useEffect(() => {
     const validIds = new Set(displayedTrips.map((trip) => trip.id));
@@ -843,6 +868,10 @@ export default function App() {
   const onSubmit = async (event) => {
     event.preventDefault();
     setError("");
+    if (createDateRangeInvalid) {
+      setError("End date cannot be before start date.");
+      return;
+    }
     try {
       const peopleMap = new Map(peopleProfiles.map((person) => [person.id, person.name]));
       const payload = {
@@ -900,6 +929,10 @@ export default function App() {
   const onSaveTripEdit = async () => {
     if (!tripEdit) return;
     setError("");
+    if (editDateRangeInvalid) {
+      setError("End date cannot be before start date.");
+      return;
+    }
     try {
       const peopleMap = new Map(peopleProfiles.map((person) => [person.id, person.name]));
       const payload = {
@@ -1138,19 +1171,30 @@ export default function App() {
     setError("");
     setAuthNotice("");
     try {
-      const payload = {
-        user_id: authForm.user_id.trim(),
-        password: authForm.password,
-      };
+      const userId = authForm.user_id.trim();
+      const password = authForm.password;
       if (authMode === "login") {
-        const data = await login(payload);
-        setCurrentUserId(data.user_id);
+        await login({ user_id: userId, password });
       } else {
-        const data = await register(payload);
-        setCurrentUserId(data.user_id);
+        const email = authForm.email.trim().toLowerCase();
+        if (!isValidEmail(email)) {
+          setError("Please enter a valid email address.");
+          return;
+        }
+        if (password !== authForm.confirm_password) {
+          setError("Password and confirm password must match.");
+          return;
+        }
+        await register({ user_id: userId, email, password });
       }
+      const me = await fetchMe();
+      setCurrentUserId(me.user_id);
+      setCurrentUserEmail(me.email || "");
+      setProfileForm({ email: me.email || "" });
+      setProfileNotice("");
+      setResetCodeSent(false);
       setAuthReady(true);
-      setAuthForm({ user_id: "", password: "" });
+      setAuthForm({ user_id: "", email: "", password: "", confirm_password: "" });
     } catch (err) {
       setError(err.message || "Authentication failed");
     }
@@ -1160,10 +1204,61 @@ export default function App() {
     setResetForm((prev) => ({ ...prev, [field]: event.target.value }));
   };
 
+  const onRequestPasswordResetCode = async () => {
+    const userId = resetForm.user_id.trim();
+    if (!userId) {
+      setError("Enter your user ID first.");
+      return;
+    }
+    setError("");
+    setAuthNotice("");
+    try {
+      await requestPasswordReset({ user_id: userId });
+      setResetCodeSent(true);
+      setAuthNotice("Verification code sent to your email.");
+    } catch (err) {
+      setError(err.message || "Could not send verification code");
+    }
+  };
+
+  const onProfileFormChange = (field) => (event) => {
+    setProfileForm((prev) => ({ ...prev, [field]: event.target.value }));
+  };
+
+  const onOpenProfile = () => {
+    setError("");
+    setProfileNotice("");
+    setProfileForm({ email: currentUserEmail || "" });
+    setIsProfileOpen(true);
+  };
+
+  const onSaveProfile = async (event) => {
+    event.preventDefault();
+    setError("");
+    setProfileNotice("");
+    const email = profileForm.email.trim().toLowerCase();
+    if (!isValidEmail(email)) {
+      setError("Please enter a valid email address.");
+      return;
+    }
+    try {
+      const updated = await updateMyProfile({ email });
+      setCurrentUserEmail(updated.email || "");
+      setProfileForm({ email: updated.email || "" });
+      setProfileNotice("Profile updated.");
+    } catch (err) {
+      setError(err.message || "Could not update profile");
+    }
+  };
+
   const onResetPasswordSubmit = async (event) => {
     event.preventDefault();
     setError("");
     setAuthNotice("");
+    if (!resetForm.email_code.trim()) {
+      setError("Please enter the verification code sent to your email.");
+      return;
+    }
     if (resetForm.new_password !== resetForm.confirm_password) {
       setError("New password and confirm password must match");
       return;
@@ -1171,10 +1266,12 @@ export default function App() {
     try {
       await resetPassword({
         user_id: resetForm.user_id.trim(),
+        email_code: resetForm.email_code.trim(),
         new_password: resetForm.new_password,
         reset_key: resetForm.reset_key.trim(),
       });
-      setResetForm({ user_id: "", new_password: "", confirm_password: "", reset_key: "" });
+      setResetForm({ user_id: "", email_code: "", new_password: "", confirm_password: "", reset_key: "" });
+      setResetCodeSent(false);
       setAuthMode("login");
       setAuthNotice("Password reset complete. Please log in with your new password.");
     } catch (err) {
@@ -1191,6 +1288,11 @@ export default function App() {
     clearAuthState();
     setAuthReady(false);
     setCurrentUserId("");
+    setCurrentUserEmail("");
+    setIsProfileOpen(false);
+    setProfileForm({ email: "" });
+    setProfileNotice("");
+    setResetCodeSent(false);
     setTrips([]);
     setPeopleProfiles([]);
     setPackingTemplates([]);
@@ -1219,10 +1321,40 @@ export default function App() {
                     User ID
                     <input value={authForm.user_id} onChange={onAuthFormChange("user_id")} required />
                   </label>
+                  {authMode === "register" ? (
+                    <label>
+                      Email
+                      <input
+                        type="email"
+                        value={authForm.email}
+                        onChange={onAuthFormChange("email")}
+                        placeholder="you@example.com"
+                        required
+                      />
+                    </label>
+                  ) : null}
                   <label>
                     Password
-                    <input type="password" value={authForm.password} onChange={onAuthFormChange("password")} required />
+                    <input
+                      type="password"
+                      value={authForm.password}
+                      onChange={onAuthFormChange("password")}
+                      minLength={8}
+                      required
+                    />
                   </label>
+                  {authMode === "register" ? (
+                    <label>
+                      Confirm Password
+                      <input
+                        type="password"
+                        value={authForm.confirm_password}
+                        onChange={onAuthFormChange("confirm_password")}
+                        minLength={8}
+                        required
+                      />
+                    </label>
+                  ) : null}
                   <button type="submit">{authMode === "login" ? "Log In" : "Create Account"}</button>
                 </form>
                 <p className="helper-text">
@@ -1232,6 +1364,7 @@ export default function App() {
                     className="link-button"
                     onClick={() => {
                       setAuthNotice("");
+                      setResetCodeSent(false);
                       setAuthMode((prev) => (prev === "login" ? "register" : "login"));
                     }}
                   >
@@ -1247,6 +1380,8 @@ export default function App() {
                       onClick={() => {
                         setError("");
                         setAuthNotice("");
+                        setResetCodeSent(false);
+                        setResetForm({ user_id: "", email_code: "", new_password: "", confirm_password: "", reset_key: "" });
                         setAuthMode("reset");
                       }}
                     >
@@ -1262,6 +1397,25 @@ export default function App() {
                     User ID
                     <input value={resetForm.user_id} onChange={onResetFormChange("user_id")} required />
                   </label>
+                  <div className="action-row">
+                    <button type="button" onClick={onRequestPasswordResetCode}>
+                      Send Verification Code
+                    </button>
+                  </div>
+                  <label>
+                    Email Verification Code
+                    <input
+                      value={resetForm.email_code}
+                      onChange={onResetFormChange("email_code")}
+                      placeholder="6-digit code"
+                      required
+                    />
+                  </label>
+                  {resetCodeSent ? (
+                    <p className="helper-text">
+                      Check your email for the verification code, then enter it below.
+                    </p>
+                  ) : null}
                   <label>
                     New Password
                     <input
@@ -1283,7 +1437,7 @@ export default function App() {
                     />
                   </label>
                   <label>
-                    Reset Key (if configured)
+                    Admin Reset Key (optional)
                     <input value={resetForm.reset_key} onChange={onResetFormChange("reset_key")} />
                   </label>
                   <button type="submit">Reset Password</button>
@@ -1296,6 +1450,7 @@ export default function App() {
                     onClick={() => {
                       setError("");
                       setAuthNotice("");
+                      setResetCodeSent(false);
                       setAuthMode("login");
                     }}
                   >
@@ -1323,10 +1478,48 @@ export default function App() {
           <button type="submit">Search</button>
         </form>
         <div className="user-box">
-          <span>{currentUserId}</span>
+          <button type="button" className="user-name-btn" onClick={onOpenProfile} title="View or edit profile">
+            {currentUserId}
+          </button>
           <button type="button" onClick={onLogout}>Log Out</button>
         </div>
       </header>
+
+      {isProfileOpen ? (
+        <section className="panel profile-panel">
+          <div className="profile-panel-header">
+            <h2>User Profile</h2>
+            <button
+              type="button"
+              className="ghost-btn"
+              onClick={() => {
+                setIsProfileOpen(false);
+                setProfileNotice("");
+              }}
+            >
+              Close
+            </button>
+          </div>
+          <form className="trip-form profile-form" onSubmit={onSaveProfile}>
+            <label>
+              User ID
+              <input value={currentUserId} disabled />
+            </label>
+            <label>
+              Email
+              <input
+                type="email"
+                value={profileForm.email}
+                onChange={onProfileFormChange("email")}
+                placeholder="you@example.com"
+                required
+              />
+            </label>
+            <button type="submit">Save Profile</button>
+            {profileNotice ? <p className="helper-text">{profileNotice}</p> : null}
+          </form>
+        </section>
+      ) : null}
 
       {error ? <p className="error">{error}</p> : null}
 
@@ -1359,7 +1552,7 @@ export default function App() {
               className={`tab-btn ${activeTab === "members" ? "is-active" : ""}`}
               onClick={() => setActiveTab("members")}
             >
-              Member Profiles
+              Family Profiles
             </button>
           </div>
 
@@ -1375,16 +1568,31 @@ export default function App() {
                   <div className="row">
                     <label>
                       Start
-                      <input className="aligned-input" type="date" value={form.start_date} onChange={onFormChange("start_date")} />
+                      <input
+                        className="aligned-input"
+                        type="date"
+                        value={form.start_date}
+                        onChange={onFormChange("start_date")}
+                        max={form.end_date || undefined}
+                      />
                     </label>
                     <label>
                       End
-                      <input className="aligned-input" type="date" value={form.end_date} onChange={onFormChange("end_date")} />
+                      <input
+                        className="aligned-input"
+                        type="date"
+                        value={form.end_date}
+                        onChange={onFormChange("end_date")}
+                        min={form.start_date || undefined}
+                      />
                     </label>
                   </div>
+                  {createDateRangeInvalid ? (
+                    <p className="form-warning">End date cannot be earlier than start date.</p>
+                  ) : null}
                   <fieldset className="members-fieldset">
                     <legend>Family Members</legend>
-                    {!peopleProfiles.length ? <p className="helper-text">Add a profile in Member Profiles to start selecting members.</p> : null}
+                    {!peopleProfiles.length ? <p className="helper-text">Add a profile in Family Profiles to start selecting members.</p> : null}
                     <div className="member-list">
                       {peopleProfiles.map((person) => (
                         <label key={person.id} className="member-item">
@@ -1458,7 +1666,7 @@ export default function App() {
                     />
                   </div>
                   <WeatherPreview trip={formWeatherTrip} />
-                  <button type="submit">Save Trip</button>
+                  <button type="submit" disabled={createDateRangeInvalid}>Save Trip</button>
                 </form>
               </>
             ) : null}
@@ -1518,13 +1726,26 @@ export default function App() {
                     <div className="row">
                       <label>
                         Start
-                        <input type="date" value={tripEdit.start_date} onChange={onTripEditChange("start_date")} />
+                        <input
+                          type="date"
+                          value={tripEdit.start_date}
+                          onChange={onTripEditChange("start_date")}
+                          max={tripEdit.end_date || undefined}
+                        />
                       </label>
                       <label>
                         End
-                        <input type="date" value={tripEdit.end_date} onChange={onTripEditChange("end_date")} />
+                        <input
+                          type="date"
+                          value={tripEdit.end_date}
+                          onChange={onTripEditChange("end_date")}
+                          min={tripEdit.start_date || undefined}
+                        />
                       </label>
                     </div>
+                    {editDateRangeInvalid ? (
+                      <p className="form-warning">End date cannot be earlier than start date.</p>
+                    ) : null}
                     <fieldset className="members-fieldset">
                       <legend>Family Members</legend>
                       <div className="member-list">
@@ -1559,7 +1780,7 @@ export default function App() {
                     </div>
                     <WeatherPreview trip={tripEditWeatherTrip} />
                     <div className="action-row">
-                      <button type="button" onClick={onSaveTripEdit}>Save Changes</button>
+                      <button type="button" onClick={onSaveTripEdit} disabled={editDateRangeInvalid}>Save Changes</button>
                       <button type="button" className="ghost-btn" onClick={() => setTripEdit(null)}>Cancel</button>
                     </div>
                   </div>
@@ -1748,10 +1969,10 @@ export default function App() {
 
             {activeTab === "members" ? (
               <>
-                <h2>Member Profiles</h2>
+                <h2>Family Profiles</h2>
                 {personEdit ? (
                   <div className="edit-card">
-                    <h3>Edit Member</h3>
+                    <h3>Edit Family Profile</h3>
                     <label>
                       Name
                       <input value={personEdit.name} onChange={onPersonEditChange("name")} />

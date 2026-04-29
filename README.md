@@ -72,7 +72,24 @@ Optional password-reset hardening:
 PASSWORD_RESET_KEY=your-private-reset-key
 ```
 
-If `PASSWORD_RESET_KEY` is set, users must provide the same key in the reset form to complete a password reset.
+If `PASSWORD_RESET_KEY` is set, it can be used as an admin override during password reset.
+
+Password-reset email verification requires SMTP configuration:
+
+```bash
+SMTP_HOST=smtp.gmail.com
+SMTP_PORT=587
+SMTP_USERNAME=your-mailbox@example.com
+SMTP_PASSWORD=your-app-password
+SMTP_FROM_EMAIL=your-mailbox@example.com
+SMTP_USE_TLS=true
+PASSWORD_RESET_CODE_TTL_MINUTES=15
+```
+
+Reset flow:
+1. User enters `user_id` and clicks **Send Verification Code**.
+2. Backend sends a code to the email on that user profile.
+3. User enters the code + new password to complete reset.
 
 ## Optional seed user
 
