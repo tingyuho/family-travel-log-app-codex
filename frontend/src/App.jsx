@@ -33,6 +33,10 @@ import {
   updateTrip,
 } from "./api";
 import "leaflet/dist/leaflet.css";
+import "leaflet.markercluster";
+import "leaflet.markercluster/dist/MarkerCluster.css";
+import "leaflet.markercluster/dist/MarkerCluster.Default.css";
+import "leaflet.heat";
 import "./styles.css";
 
 const pinIcon = new L.Icon({
@@ -418,6 +422,136 @@ function MapFocus({ selectedTrips }) {
       animate: true,
     });
   }, [map, selectedTrips]);
+  return null;
+}
+
+function escapeHtml(value) {
+  return String(value ?? "")
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#39;");
+}
+
+function buildTripPopupHtml(trip, stopLabel) {
+  const stays = (trip.accommodations || [])
+    .map((stay) => {
+      const stayName = escapeHtml(stay.name || "Stay");
+      const stayLocation = stay.location ? `, ${escapeHtml(stay.location)}` : "";
+      const stayDates = stay.check_in || stay.check_out
+        ? ` (${escapeHtml(stay.check_in || "?")} - ${escapeHtml(stay.check_out || "?")})`
+        : "";
+      return `<li>${stayName}${stayLocation}${stayDates}</li>`;
+    })
+    .join("");
+
+  return `
+    <div class="trip-popup">
+      <h4>${escapeHtml(trip.title || "Trip")}</h4>
+      ${stopLabel ? `<p><strong>Stop:</strong> ${escapeHtml(stopLabel)}</p>` : ""}
+      <p><strong>Dates:</strong> ${escapeHtml(trip.start_date || "Unknown start")} - ${escapeHtml(trip.end_date || "Unknown end")}</p>
+      ${trip.notes ? `<p>${escapeHtml(trip.notes)}</p>` : ""}
+      ${(trip.people || []).length ? `<p><strong>People:</strong> ${(trip.people || []).map(escapeHtml).join(", ")}</p>` : ""}
+      ${stays ? `<div><strong>Stays:</strong><ul>${stays}</ul></div>` : ""}
+    </div>
+  `;
+}
+
+function ClusteredTripMarkers({
+  trips,
+  selectedTripIdsSet,
+  hasExplicitSelection,
+  onToggleTripSelection,
+}) {
+  const map = useMap();
+
+  useEffect(() => {
+    const globalLeaflet = typeof window !== "undefined" ? window.L : null;
+    const clusterFactory = L.markerClusterGroup || globalLeaflet?.markerClusterGroup;
+    if (typeof clusterFactory !== "function") return undefined;
+
+    const clusterGroup = clusterFactory({
+      chunkedLoading: true,
+      disableClusteringAtZoom: 10,
+      spiderfyOnMaxZoom: true,
+      showCoverageOnHover: false,
+    });
+
+    trips.forEach((trip) => {
+      const isSelected = selectedTripIdsSet.has(trip.id);
+      const shouldHighlight = !hasExplicitSelection || isSelected;
+      (trip.route || []).forEach((point, idx) => {
+        const marker = L.marker([point.lat, point.lng], {
+          icon: pinIcon,
+          opacity: shouldHighlight ? 1 : 0.55,
+        });
+        marker.on("click", () => onToggleTripSelection(trip.id));
+        marker.bindPopup(buildTripPopupHtml(trip, point.label || `Stop ${idx + 1}`));
+        clusterGroup.addLayer(marker);
+      });
+    });
+
+    map.addLayer(clusterGroup);
+    return () => {
+      map.removeLayer(clusterGroup);
+    };
+  }, [map, trips, selectedTripIdsSet, hasExplicitSelection, onToggleTripSelection]);
+
+  return null;
+}
+
+function TripHeatmapLayer({ trips }) {
+  const map = useMap();
+
+  useEffect(() => {
+    const globalLeaflet = typeof window !== "undefined" ? window.L : null;
+    const heatFactory = L.heatLayer || globalLeaflet?.heatLayer;
+    if (typeof heatFactory !== "function") return undefined;
+
+    const bucketedPoints = new Map();
+    trips.forEach((trip) => {
+      (trip.route || []).forEach((point) => {
+        const key = `${point.lat.toFixed(2)}|${point.lng.toFixed(2)}`;
+        const existing = bucketedPoints.get(key);
+        if (existing) {
+          existing.count += 1;
+          return;
+        }
+        bucketedPoints.set(key, { lat: point.lat, lng: point.lng, count: 1 });
+      });
+    });
+
+    const pointList = [...bucketedPoints.values()];
+    if (!pointList.length) return undefined;
+
+    const maxCount = Math.max(...pointList.map((point) => point.count));
+    const heatPoints = pointList.map((point) => [
+      point.lat,
+      point.lng,
+      Math.max(0.25, point.count / Math.max(1, maxCount)),
+    ]);
+
+    const heatLayer = heatFactory(heatPoints, {
+      radius: 28,
+      blur: 24,
+      minOpacity: 0.3,
+      maxZoom: 7,
+      gradient: {
+        0.2: "#4cc9f0",
+        0.4: "#3a86ff",
+        0.6: "#ffbe0b",
+        0.8: "#fb5607",
+        1: "#d00000",
+      },
+    });
+
+    map.addLayer(heatLayer);
+    return () => {
+      map.removeLayer(heatLayer);
+    };
+  }, [map, trips]);
+
   return null;
 }
 
@@ -1035,6 +1169,8 @@ export default function App() {
   const [expandedWeatherTripIds, setExpandedWeatherTripIds] = useState([]);
   const [calendarSyncTripId, setCalendarSyncTripId] = useState(null);
   const [focusedTripId, setFocusedTripId] = useState(null);
+  const [showMarkerClusters, setShowMarkerClusters] = useState(true);
+  const [showHeatmap, setShowHeatmap] = useState(true);
   const [isPersonFilterOpen, setIsPersonFilterOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("log");
   const [routeQuery, setRouteQuery] = useState("");
@@ -1169,6 +1305,10 @@ export default function App() {
     () => displayedTrips.filter((trip) => selectedTripIdsSet.has(trip.id)),
     [displayedTrips, selectedTripIdsSet]
   );
+  const heatmapTrips = useMemo(() => {
+    if (!hasExplicitSelection) return displayedTrips;
+    return displayedTrips.filter((trip) => selectedTripIdsSet.has(trip.id));
+  }, [displayedTrips, hasExplicitSelection, selectedTripIdsSet]);
   const focusedTrip = useMemo(
     () => displayedTrips.find((trip) => trip.id === focusedTripId) || null,
     [displayedTrips, focusedTripId]
@@ -2501,7 +2641,27 @@ export default function App() {
         </section>
 
         <section className="panel map-panel">
-          <h2>Travel Map</h2>
+          <div className="map-header">
+            <h2>Travel Map</h2>
+            <div className="map-layer-controls">
+              <label className="map-layer-toggle">
+                <input
+                  type="checkbox"
+                  checked={showMarkerClusters}
+                  onChange={(event) => setShowMarkerClusters(event.target.checked)}
+                />
+                <span>Clusters</span>
+              </label>
+              <label className="map-layer-toggle">
+                <input
+                  type="checkbox"
+                  checked={showHeatmap}
+                  onChange={(event) => setShowHeatmap(event.target.checked)}
+                />
+                <span>Heatmap</span>
+              </label>
+            </div>
+          </div>
           <MapContainer
             center={mapCenter}
             zoom={4}
@@ -2518,6 +2678,7 @@ export default function App() {
               noWrap
               bounds={[[-85, -180], [85, 180]]}
             />
+            {showHeatmap ? <TripHeatmapLayer trips={heatmapTrips} /> : null}
             {displayedTrips.map((trip) => {
               const isSelected = selectedTripIdsSet.has(trip.id);
               const shouldHighlight = !hasExplicitSelection || isSelected;
@@ -2538,31 +2699,47 @@ export default function App() {
                       </Popup>
                     </Polyline>
                   ) : null}
-                  {(trip.route || []).map((point, idx) => (
-                    <Fragment key={`${trip.id}-${idx}`}>
-                      <Marker
-                        position={[point.lat, point.lng]}
-                        icon={pinIcon}
-                        eventHandlers={{
-                          click: () => toggleTripSelection(trip.id),
-                        }}
-                      >
-                        <Popup>
-                          <TripPopupContent trip={trip} stopLabel={point.label || "Stop"} />
-                        </Popup>
-                      </Marker>
-                      {isSelected ? (
-                        <CircleMarker
-                          center={[point.lat, point.lng]}
-                          radius={13}
-                          pathOptions={{ color: "#e55f2b", fillColor: "#ffd16a", fillOpacity: 0.45, weight: 3 }}
-                        />
-                      ) : null}
-                    </Fragment>
-                  ))}
                 </Fragment>
               );
             })}
+            {showMarkerClusters ? (
+              <ClusteredTripMarkers
+                trips={displayedTrips}
+                selectedTripIdsSet={selectedTripIdsSet}
+                hasExplicitSelection={hasExplicitSelection}
+                onToggleTripSelection={toggleTripSelection}
+              />
+            ) : (
+              displayedTrips.map((trip) => {
+                const isSelected = selectedTripIdsSet.has(trip.id);
+                const shouldHighlight = !hasExplicitSelection || isSelected;
+                return (trip.route || []).map((point, idx) => (
+                  <Marker
+                    key={`${trip.id}-${idx}`}
+                    position={[point.lat, point.lng]}
+                    icon={pinIcon}
+                    opacity={shouldHighlight ? 1 : 0.55}
+                    eventHandlers={{
+                      click: () => toggleTripSelection(trip.id),
+                    }}
+                  >
+                    <Popup>
+                      <TripPopupContent trip={trip} stopLabel={point.label || "Stop"} />
+                    </Popup>
+                  </Marker>
+                ));
+              })
+            )}
+            {selectedTrips.flatMap((trip) =>
+              (trip.route || []).map((point, idx) => (
+                <CircleMarker
+                  key={`selected-${trip.id}-${idx}`}
+                  center={[point.lat, point.lng]}
+                  radius={13}
+                  pathOptions={{ color: "#e55f2b", fillColor: "#ffd16a", fillOpacity: 0.45, weight: 3 }}
+                />
+              ))
+            )}
           </MapContainer>
         </section>
 

@@ -841,6 +841,39 @@ button:disabled {
   top: 0.75rem;
 }
 
+.map-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.map-layer-controls {
+  display: flex;
+  align-items: center;
+  gap: 0.45rem;
+  flex-wrap: wrap;
+}
+
+.map-layer-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  border: 1px solid #c9d4df;
+  border-radius: 8px;
+  background: #fff;
+  padding: 0.26rem 0.5rem;
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #1f3649;
+}
+
+.map-layer-toggle input {
+  width: auto;
+  margin: 0;
+}
+
 .map-view {
   margin-top: 0.7rem;
   width: 100%;
