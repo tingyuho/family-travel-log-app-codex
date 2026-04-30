@@ -11,7 +11,7 @@ from app.db import DB_PATH, init_db
 
 
 TABLES = {
-    "users": ("user_id", "password_hash", "created_at"),
+    "users": ("user_id", "email", "password_hash", "created_at"),
     "trips": (
         "id",
         "user_id",
@@ -22,11 +22,18 @@ TABLES = {
         "route_json",
         "people_json",
         "accommodations_json",
+        "itinerary_json",
         "created_at",
         "updated_at",
     ),
     "people_profiles": ("id", "user_id", "name", "relationship", "notes", "created_at"),
     "packing_templates": ("id", "user_id", "name", "items_json", "created_at", "updated_at"),
+}
+
+
+DEFAULTS = {
+    "email": "",
+    "itinerary_json": "[]",
 }
 
 
@@ -53,7 +60,10 @@ def upsert_rows(conn: psycopg.Connection, table_name: str, columns: tuple[str, .
         ON CONFLICT ({conflict_column}) DO UPDATE SET {update_sql}
     """
     for row in rows:
-        conn.execute(sql, tuple(row[column] for column in columns))
+        values = []
+        for column in columns:
+            values.append(row[column] if column in row.keys() else DEFAULTS.get(column))
+        conn.execute(sql, tuple(values))
 
 
 def reset_sequence(conn: psycopg.Connection, table_name: str) -> None:

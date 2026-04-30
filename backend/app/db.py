@@ -127,6 +127,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
                 route_json TEXT NOT NULL DEFAULT '[]',
                 people_json TEXT NOT NULL DEFAULT '[]',
                 accommodations_json TEXT NOT NULL DEFAULT '[]',
+                itinerary_json TEXT NOT NULL DEFAULT '[]',
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -201,6 +202,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
             route_json TEXT NOT NULL DEFAULT '[]',
             people_json TEXT NOT NULL DEFAULT '[]',
             accommodations_json TEXT NOT NULL DEFAULT '[]',
+            itinerary_json TEXT NOT NULL DEFAULT '[]',
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -275,6 +277,8 @@ def init_db() -> None:
         # Migrate older DBs that didn't have user ownership columns.
         if not _has_column(conn, "trips", "user_id"):
             conn.execute("ALTER TABLE trips ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        if not _has_column(conn, "trips", "itinerary_json"):
+            conn.execute("ALTER TABLE trips ADD COLUMN itinerary_json TEXT NOT NULL DEFAULT '[]'")
         if not _has_column(conn, "users", "email"):
             conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         if not _has_column(conn, "people_profiles", "user_id"):

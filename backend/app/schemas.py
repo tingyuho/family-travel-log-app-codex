@@ -20,6 +20,14 @@ class Accommodation(BaseModel):
     notes: str = ""
 
 
+class ItineraryEvent(BaseModel):
+    date: date
+    time: str = Field(default="", max_length=20)
+    activity: str = Field(min_length=1, max_length=160)
+    location: str = Field(default="", max_length=160)
+    notes: str = Field(default="", max_length=300)
+
+
 class TripBase(BaseModel):
     title: str = Field(min_length=1, max_length=140)
     start_date: date | None = None
@@ -28,6 +36,7 @@ class TripBase(BaseModel):
     route: list[RoutePoint] = Field(default_factory=list)
     people: list[str] = Field(default_factory=list)
     accommodations: list[Accommodation] = Field(default_factory=list)
+    itinerary: list[ItineraryEvent] = Field(default_factory=list)
 
 
 class TripCreate(TripBase):

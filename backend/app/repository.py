@@ -37,6 +37,7 @@ def _serialize_trip_payload(payload: TripCreate | TripUpdate) -> dict[str, Any]:
         "route_json": json.dumps(data["route"]),
         "people_json": json.dumps(data["people"]),
         "accommodations_json": json.dumps(data["accommodations"]),
+        "itinerary_json": json.dumps(data["itinerary"]),
     }
 
 
@@ -50,6 +51,7 @@ def _row_to_trip(row: Any) -> Trip:
         route=json.loads(row["route_json"]),
         people=json.loads(row["people_json"]),
         accommodations=json.loads(row["accommodations_json"]),
+        itinerary=json.loads(row["itinerary_json"] or "[]"),
         created_at=row["created_at"],
         updated_at=row["updated_at"],
     )
@@ -67,9 +69,10 @@ def list_trips(user_id: str, query: str | None = None) -> list[Trip]:
                 OR people_json LIKE ?
                 OR accommodations_json LIKE ?
                 OR route_json LIKE ?
+                OR itinerary_json LIKE ?
             )
         """
-        params.extend([q, q, q, q, q])
+        params.extend([q, q, q, q, q, q])
     sql += " ORDER BY COALESCE(start_date, created_at) DESC, id DESC"
 
     with get_connection() as conn:
@@ -95,8 +98,8 @@ def create_trip(user_id: str, payload: TripCreate) -> Trip:
         cursor = conn.execute(
             f"""
             INSERT INTO trips (
-                user_id, title, start_date, end_date, notes, route_json, people_json, accommodations_json
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                user_id, title, start_date, end_date, notes, route_json, people_json, accommodations_json, itinerary_json
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
             {returning_clause}
             """,
             (
@@ -108,6 +111,7 @@ def create_trip(user_id: str, payload: TripCreate) -> Trip:
                 data["route_json"],
                 data["people_json"],
                 data["accommodations_json"],
+                data["itinerary_json"],
             ),
         )
         trip_id = cursor.fetchone()["id"] if is_postgres() else cursor.lastrowid
@@ -123,7 +127,7 @@ def update_trip(user_id: str, trip_id: int, payload: TripUpdate) -> Trip | None:
         cursor = conn.execute(
             """
             UPDATE trips
-            SET title = ?, start_date = ?, end_date = ?, notes = ?, route_json = ?, people_json = ?, accommodations_json = ?, updated_at = CURRENT_TIMESTAMP
+            SET title = ?, start_date = ?, end_date = ?, notes = ?, route_json = ?, people_json = ?, accommodations_json = ?, itinerary_json = ?, updated_at = CURRENT_TIMESTAMP
             WHERE id = ? AND user_id = ?
             """,
             (
@@ -134,6 +138,7 @@ def update_trip(user_id: str, trip_id: int, payload: TripUpdate) -> Trip | None:
                 data["route_json"],
                 data["people_json"],
                 data["accommodations_json"],
+                data["itinerary_json"],
                 trip_id,
                 user_id,
             ),

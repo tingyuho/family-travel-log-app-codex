@@ -52,6 +52,16 @@ function createEmptyAccommodation() {
   };
 }
 
+function createEmptyItineraryEvent() {
+  return {
+    date: "",
+    time: "",
+    activity: "",
+    location: "",
+    notes: "",
+  };
+}
+
 function createEmptyForm() {
   return {
     title: "",
@@ -61,6 +71,7 @@ function createEmptyForm() {
     selected_person_ids: [],
     route_text: "",
     accommodations: [createEmptyAccommodation()],
+    itinerary: [createEmptyItineraryEvent()],
   };
 }
 
@@ -119,6 +130,36 @@ function cleanAccommodationRows(accommodations) {
       check_in: stay.check_in || null,
       check_out: stay.check_out || null,
       notes: stay.notes,
+    }));
+}
+
+function normalizeItineraryRows(itinerary) {
+  const rows = (itinerary || []).map((item) => ({
+    date: item.date || "",
+    time: item.time || "",
+    activity: item.activity || "",
+    location: item.location || "",
+    notes: item.notes || "",
+  }));
+  return rows.length ? rows : [createEmptyItineraryEvent()];
+}
+
+function cleanItineraryRows(itinerary) {
+  return (itinerary || [])
+    .map((item) => ({
+      date: (item.date || "").trim(),
+      time: (item.time || "").trim(),
+      activity: (item.activity || "").trim(),
+      location: (item.location || "").trim(),
+      notes: (item.notes || "").trim(),
+    }))
+    .filter((item) => item.date && item.activity)
+    .map((item) => ({
+      date: item.date,
+      time: item.time,
+      activity: item.activity,
+      location: item.location,
+      notes: item.notes,
     }));
 }
 
@@ -491,6 +532,369 @@ function AccommodationRepeater({ accommodations, onChange }) {
   );
 }
 
+function ItineraryRepeater({ itinerary, onChange }) {
+  const rows = Array.isArray(itinerary) && itinerary.length ? itinerary : [createEmptyItineraryEvent()];
+
+  const updateRow = (index, field, value) => {
+    const next = rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row));
+    onChange(next);
+  };
+
+  const addRow = () => {
+    onChange([...rows, createEmptyItineraryEvent()]);
+  };
+
+  const removeRow = (index) => {
+    const next = rows.filter((_, rowIndex) => rowIndex !== index);
+    onChange(next.length ? next : [createEmptyItineraryEvent()]);
+  };
+
+  return (
+    <div className="itinerary-repeater">
+      {rows.map((row, index) => (
+        <div key={`itinerary-${index}`} className="itinerary-row">
+          <div className="itinerary-row-header">
+            <strong>Item {index + 1}</strong>
+            <button type="button" className="ghost-btn" onClick={() => removeRow(index)}>
+              Remove
+            </button>
+          </div>
+          <div className="itinerary-grid">
+            <label>
+              Date
+              <input
+                type="date"
+                value={row.date}
+                onChange={(event) => updateRow(index, "date", event.target.value)}
+              />
+            </label>
+            <label>
+              Time
+              <input
+                type="time"
+                value={row.time}
+                onChange={(event) => updateRow(index, "time", event.target.value)}
+              />
+            </label>
+            <label>
+              Activity
+              <input
+                value={row.activity}
+                onChange={(event) => updateRow(index, "activity", event.target.value)}
+                placeholder="Museum visit, beach time, check-in"
+              />
+            </label>
+            <label>
+              Location
+              <input
+                value={row.location}
+                onChange={(event) => updateRow(index, "location", event.target.value)}
+                placeholder="Location"
+              />
+            </label>
+            <label className="itinerary-notes">
+              Notes
+              <textarea
+                rows={2}
+                value={row.notes}
+                onChange={(event) => updateRow(index, "notes", event.target.value)}
+                placeholder="Tickets booked, meeting point, reminders"
+              />
+            </label>
+          </div>
+        </div>
+      ))}
+      <button type="button" className="ghost-btn itinerary-add-btn" onClick={addRow}>
+        + Add itinerary item
+      </button>
+      <p className="helper-text">Only items with both date and activity are saved.</p>
+    </div>
+  );
+}
+
+function formatTimelineDate(dateText) {
+  if (!dateText) return "General";
+  const parsed = new Date(`${dateText}T00:00:00`);
+  if (Number.isNaN(parsed.getTime())) return dateText;
+  return parsed.toLocaleDateString(undefined, {
+    weekday: "short",
+    month: "short",
+    day: "numeric",
+  });
+}
+
+function buildTripTimelineDays(trip) {
+  const buckets = new Map();
+
+  const pushItem = (date, item) => {
+    const key = date || "general";
+    if (!buckets.has(key)) buckets.set(key, []);
+    buckets.get(key).push(item);
+  };
+
+  (trip.itinerary || []).forEach((event) => {
+    pushItem(event.date, {
+      type: "activity",
+      time: event.time || "",
+      title: event.activity,
+      location: event.location || "",
+      notes: event.notes || "",
+    });
+  });
+
+  (trip.accommodations || []).forEach((stay) => {
+    if (stay.check_in) {
+      pushItem(stay.check_in, {
+        type: "stay",
+        time: "",
+        title: `Check-in: ${stay.name}`,
+        location: stay.location || "",
+        notes: stay.notes || "",
+      });
+    }
+    if (stay.check_out) {
+      pushItem(stay.check_out, {
+        type: "stay",
+        time: "",
+        title: `Check-out: ${stay.name}`,
+        location: stay.location || "",
+        notes: stay.notes || "",
+      });
+    }
+  });
+
+  if (trip.notes?.trim()) {
+    pushItem(trip.start_date || "", {
+      type: "note",
+      time: "",
+      title: "Trip Notes",
+      location: "",
+      notes: trip.notes.trim(),
+    });
+  }
+
+  return [...buckets.entries()]
+    .sort(([a], [b]) => {
+      if (a === "general") return 1;
+      if (b === "general") return -1;
+      return a.localeCompare(b);
+    })
+    .map(([date, items]) => ({
+      date,
+      label: formatTimelineDate(date === "general" ? "" : date),
+      items: [...items].sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99")),
+    }));
+}
+
+function TripItineraryTimeline({ trip }) {
+  const days = buildTripTimelineDays(trip);
+  if (!days.length) {
+    return <p className="helper-text">No itinerary items yet.</p>;
+  }
+
+  return (
+    <div className="itinerary-timeline">
+      {days.map((day) => (
+        <section key={`${trip.id}-${day.date || "general"}`} className="itinerary-day-card">
+          <h4>{day.label}</h4>
+          <ul>
+            {day.items.map((item, idx) => (
+              <li key={`${trip.id}-${day.date}-${idx}`}>
+                <div className="itinerary-item-head">
+                  <span className={`itinerary-badge itinerary-${item.type}`}>{item.type}</span>
+                  <strong>{item.title}</strong>
+                  {item.time ? <time>{item.time}</time> : null}
+                </div>
+                {item.location ? <p className="itinerary-location">{item.location}</p> : null}
+                {item.notes ? <p className="itinerary-notes-text">{item.notes}</p> : null}
+              </li>
+            ))}
+          </ul>
+        </section>
+      ))}
+    </div>
+  );
+}
+
+function addDaysToDateText(dateText, days) {
+  if (!dateText) return "";
+  const [year, month, day] = dateText.split("-").map((part) => Number(part));
+  const date = new Date(year, (month || 1) - 1, day || 1);
+  if (Number.isNaN(date.getTime())) return dateText;
+  date.setDate(date.getDate() + days);
+  const yyyy = String(date.getFullYear()).padStart(4, "0");
+  const mm = String(date.getMonth() + 1).padStart(2, "0");
+  const dd = String(date.getDate()).padStart(2, "0");
+  return `${yyyy}-${mm}-${dd}`;
+}
+
+function toCompactDate(dateText) {
+  return (dateText || "").replaceAll("-", "");
+}
+
+function toCompactDateTime(dateText, timeText) {
+  const datePart = toCompactDate(dateText);
+  const [hours = "00", minutes = "00"] = (timeText || "").split(":");
+  return `${datePart}T${hours.padStart(2, "0")}${minutes.padStart(2, "0")}00`;
+}
+
+function escapeIcsText(text) {
+  return (text || "")
+    .replaceAll("\\", "\\\\")
+    .replaceAll("\n", "\\n")
+    .replaceAll(",", "\\,")
+    .replaceAll(";", "\\;");
+}
+
+function buildCalendarEvents(trip) {
+  const events = [];
+  const tripSummaryLines = [];
+
+  if (trip.notes?.trim()) tripSummaryLines.push(`Trip notes: ${trip.notes.trim()}`);
+  if (trip.people?.length) tripSummaryLines.push(`People: ${trip.people.join(", ")}`);
+  if (trip.route?.length) {
+    const stops = trip.route.map((point) => point.label || `${point.lat},${point.lng}`).join(" -> ");
+    tripSummaryLines.push(`Route: ${stops}`);
+  }
+
+  const accommodations = trip.accommodations || [];
+  if (accommodations.length) {
+    tripSummaryLines.push("Accommodations:");
+    accommodations.forEach((stay) => {
+      tripSummaryLines.push(
+        `- ${stay.name}${stay.location ? ` (${stay.location})` : ""}${stay.check_in || stay.check_out ? ` ${stay.check_in || "?"} to ${stay.check_out || "?"}` : ""}`
+      );
+    });
+  }
+
+  const itinerary = trip.itinerary || [];
+  if (itinerary.length) {
+    tripSummaryLines.push("Itinerary:");
+    itinerary.forEach((item) => {
+      tripSummaryLines.push(
+        `- ${item.date}${item.time ? ` ${item.time}` : ""}: ${item.activity}${item.location ? ` @ ${item.location}` : ""}${item.notes ? ` (${item.notes})` : ""}`
+      );
+    });
+  }
+
+  if (trip.start_date) {
+    events.push({
+      title: trip.title || "Trip",
+      isAllDay: true,
+      startDate: trip.start_date,
+      endDateExclusive: addDaysToDateText(trip.end_date || trip.start_date, 1),
+      location: accommodations[0]?.location || "",
+      details: tripSummaryLines.join("\n"),
+    });
+  }
+
+  accommodations.forEach((stay) => {
+    if (stay.check_in) {
+      events.push({
+        title: `Check-in: ${stay.name}`,
+        isAllDay: true,
+        startDate: stay.check_in,
+        endDateExclusive: addDaysToDateText(stay.check_in, 1),
+        location: stay.location || "",
+        details: stay.notes || "",
+      });
+    }
+    if (stay.check_out) {
+      events.push({
+        title: `Check-out: ${stay.name}`,
+        isAllDay: true,
+        startDate: stay.check_out,
+        endDateExclusive: addDaysToDateText(stay.check_out, 1),
+        location: stay.location || "",
+        details: stay.notes || "",
+      });
+    }
+  });
+
+  itinerary.forEach((item) => {
+    if (!item.date || !item.activity) return;
+    if (item.time) {
+      const [h = "09", m = "00"] = item.time.split(":");
+      const startDateTime = `${item.date}T${h.padStart(2, "0")}:${m.padStart(2, "0")}:00`;
+      const dateObj = new Date(startDateTime);
+      const endObj = Number.isNaN(dateObj.getTime()) ? new Date(`${item.date}T10:00:00`) : new Date(dateObj.getTime() + 60 * 60 * 1000);
+      const endDateText = `${endObj.getFullYear()}-${String(endObj.getMonth() + 1).padStart(2, "0")}-${String(endObj.getDate()).padStart(2, "0")}`;
+      const endTimeText = `${String(endObj.getHours()).padStart(2, "0")}:${String(endObj.getMinutes()).padStart(2, "0")}`;
+      events.push({
+        title: item.activity,
+        isAllDay: false,
+        startDate: item.date,
+        startTime: item.time,
+        endDate: endDateText,
+        endTime: endTimeText,
+        location: item.location || "",
+        details: item.notes || "",
+      });
+    } else {
+      events.push({
+        title: item.activity,
+        isAllDay: true,
+        startDate: item.date,
+        endDateExclusive: addDaysToDateText(item.date, 1),
+        location: item.location || "",
+        details: item.notes || "",
+      });
+    }
+  });
+
+  return events.filter((event) => event.startDate && event.title);
+}
+
+function buildGoogleCalendarUrl(event) {
+  const base = "https://calendar.google.com/calendar/render";
+  const params = new URLSearchParams();
+  params.set("action", "TEMPLATE");
+  params.set("text", event.title);
+  if (event.isAllDay) {
+    params.set("dates", `${toCompactDate(event.startDate)}/${toCompactDate(event.endDateExclusive || addDaysToDateText(event.startDate, 1))}`);
+  } else {
+    params.set(
+      "dates",
+      `${toCompactDateTime(event.startDate, event.startTime || "09:00")}/${toCompactDateTime(event.endDate || event.startDate, event.endTime || "10:00")}`
+    );
+  }
+  if (event.location) params.set("location", event.location);
+  if (event.details) params.set("details", event.details);
+  return `${base}?${params.toString()}`;
+}
+
+function buildTripIcsText(trip) {
+  const now = new Date();
+  const stamp = `${now.getUTCFullYear()}${String(now.getUTCMonth() + 1).padStart(2, "0")}${String(now.getUTCDate()).padStart(2, "0")}T${String(now.getUTCHours()).padStart(2, "0")}${String(now.getUTCMinutes()).padStart(2, "0")}${String(now.getUTCSeconds()).padStart(2, "0")}Z`;
+  const events = buildCalendarEvents(trip);
+  const lines = [
+    "BEGIN:VCALENDAR",
+    "VERSION:2.0",
+    "PRODID:-//Family Travel Log//EN",
+    "CALSCALE:GREGORIAN",
+  ];
+
+  events.forEach((event, index) => {
+    lines.push("BEGIN:VEVENT");
+    lines.push(`UID:${trip.id}-${index}@family-travel-log`);
+    lines.push(`DTSTAMP:${stamp}`);
+    lines.push(`SUMMARY:${escapeIcsText(event.title)}`);
+    if (event.location) lines.push(`LOCATION:${escapeIcsText(event.location)}`);
+    if (event.details) lines.push(`DESCRIPTION:${escapeIcsText(event.details)}`);
+    if (event.isAllDay) {
+      lines.push(`DTSTART;VALUE=DATE:${toCompactDate(event.startDate)}`);
+      lines.push(`DTEND;VALUE=DATE:${toCompactDate(event.endDateExclusive || addDaysToDateText(event.startDate, 1))}`);
+    } else {
+      lines.push(`DTSTART:${toCompactDateTime(event.startDate, event.startTime || "09:00")}`);
+      lines.push(`DTEND:${toCompactDateTime(event.endDate || event.startDate, event.endTime || "10:00")}`);
+    }
+    lines.push("END:VEVENT");
+  });
+
+  lines.push("END:VCALENDAR");
+  return lines.join("\r\n");
+}
+
 function WeatherPreview({ trip }) {
   const [reports, setReports] = useState([]);
   const [status, setStatus] = useState("idle");
@@ -629,6 +1033,7 @@ export default function App() {
   const [selectedPeopleFilters, setSelectedPeopleFilters] = useState([]);
   const [selectedTripIds, setSelectedTripIds] = useState([]);
   const [expandedWeatherTripIds, setExpandedWeatherTripIds] = useState([]);
+  const [calendarSyncTripId, setCalendarSyncTripId] = useState(null);
   const [focusedTripId, setFocusedTripId] = useState(null);
   const [isPersonFilterOpen, setIsPersonFilterOpen] = useState(false);
   const [activeTab, setActiveTab] = useState("log");
@@ -807,6 +1212,7 @@ export default function App() {
     setSelectedTripIds((prev) => prev.filter((id) => validIds.has(id)));
     setExpandedWeatherTripIds((prev) => prev.filter((id) => validIds.has(id)));
     setFocusedTripId((prev) => (prev && validIds.has(prev) ? prev : null));
+    setCalendarSyncTripId((prev) => (prev && validIds.has(prev) ? prev : null));
   }, [displayedTrips]);
 
   useEffect(() => {
@@ -882,6 +1288,7 @@ export default function App() {
         people: form.selected_person_ids.map((id) => peopleMap.get(id)).filter(Boolean),
         route: parseRoute(form.route_text),
         accommodations: cleanAccommodationRows(form.accommodations),
+        itinerary: cleanItineraryRows(form.itinerary),
       };
       await createTrip(payload);
       setForm(createEmptyForm());
@@ -908,6 +1315,7 @@ export default function App() {
       selected_person_ids: peopleNamesToIds(trip.people),
       route_text: formatRouteText(trip.route),
       accommodations: normalizeAccommodationRows(trip.accommodations),
+      itinerary: normalizeItineraryRows(trip.itinerary),
     });
   };
 
@@ -943,6 +1351,7 @@ export default function App() {
         people: tripEdit.selected_person_ids.map((id) => peopleMap.get(id)).filter(Boolean),
         route: parseRoute(tripEdit.route_text),
         accommodations: cleanAccommodationRows(tripEdit.accommodations),
+        itinerary: cleanItineraryRows(tripEdit.itinerary),
       };
       await updateTrip(tripEdit.id, payload);
       setTripEdit(null);
@@ -1157,6 +1566,32 @@ export default function App() {
     }
   };
 
+  const onDownloadTripIcs = (trip) => {
+    try {
+      const icsText = buildTripIcsText(trip);
+      const blob = new Blob([icsText], { type: "text/calendar;charset=utf-8" });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.href = url;
+      link.download = `${(trip.title || "trip").replace(/[^\w\-]+/g, "_")}.ics`;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    } catch (err) {
+      setError(err.message || "Could not build ICS file");
+    }
+  };
+
+  const onOpenTripInGoogleCalendar = (trip) => {
+    const events = buildCalendarEvents(trip);
+    if (!events.length) {
+      setError("No trip date data available for calendar sync.");
+      return;
+    }
+    window.open(buildGoogleCalendarUrl(events[0]), "_blank", "noopener,noreferrer");
+  };
+
   const onSearchSubmit = async (event) => {
     event.preventDefault();
     await loadTrips(query);
@@ -1298,6 +1733,7 @@ export default function App() {
     setPackingTemplates([]);
     setSelectedTripIds([]);
     setExpandedWeatherTripIds([]);
+    setCalendarSyncTripId(null);
     setActivePackingTemplateId(null);
     setCheckedPackingItems({});
     packingChecksHydratedRef.current = false;
@@ -1656,12 +2092,18 @@ export default function App() {
                       </ul>
                     ) : null}
                   </div>
-                  <div className="field-group">
-                    <span className="field-group-label">Accommodations</span>
+                  <div className="field-group trip-plan-group">
+                    <span className="field-group-label">Trip Plan: Accommodations + Day-by-Day Itinerary</span>
                     <AccommodationRepeater
                       accommodations={form.accommodations}
                       onChange={(accommodations) =>
                         setForm((prev) => ({ ...prev, accommodations }))
+                      }
+                    />
+                    <ItineraryRepeater
+                      itinerary={form.itinerary}
+                      onChange={(itinerary) =>
+                        setForm((prev) => ({ ...prev, itinerary }))
                       }
                     />
                   </div>
@@ -1769,12 +2211,18 @@ export default function App() {
                       Route
                       <textarea rows={4} value={tripEdit.route_text} onChange={onTripEditChange("route_text")} />
                     </label>
-                    <div className="field-group">
-                      <span className="field-group-label">Accommodations</span>
+                    <div className="field-group trip-plan-group">
+                      <span className="field-group-label">Trip Plan: Accommodations + Day-by-Day Itinerary</span>
                       <AccommodationRepeater
                         accommodations={tripEdit.accommodations}
                         onChange={(accommodations) =>
                           setTripEdit((prev) => (prev ? { ...prev, accommodations } : prev))
+                        }
+                      />
+                      <ItineraryRepeater
+                        itinerary={tripEdit.itinerary}
+                        onChange={(itinerary) =>
+                          setTripEdit((prev) => (prev ? { ...prev, itinerary } : prev))
                         }
                       />
                     </div>
@@ -1818,6 +2266,16 @@ export default function App() {
                             </button>
                             <button
                               type="button"
+                              className="calendar-btn"
+                              onClick={(event) => {
+                                event.stopPropagation();
+                                setCalendarSyncTripId((prev) => (prev === trip.id ? null : trip.id));
+                              }}
+                            >
+                              Calendar Sync
+                            </button>
+                            <button
+                              type="button"
                               onClick={(event) => {
                                 event.stopPropagation();
                                 onDelete(trip.id);
@@ -1838,6 +2296,23 @@ export default function App() {
                             {trip.accommodations.map((a) => `${a.name} (${a.location || "N/A"})`).join("; ")}
                           </p>
                         ) : null}
+                        {calendarSyncTripId === trip.id ? (
+                          <div
+                            className="calendar-sync-actions"
+                            onClick={(event) => event.stopPropagation()}
+                          >
+                            <button type="button" className="calendar-google-btn" onClick={() => onOpenTripInGoogleCalendar(trip)}>
+                              Push to Google Calendar
+                            </button>
+                            <button type="button" className="calendar-ics-btn" onClick={() => onDownloadTripIcs(trip)}>
+                              Download ICS
+                            </button>
+                          </div>
+                        ) : null}
+                        <div className="trip-itinerary-block">
+                          <h4>Day-by-Day Itinerary</h4>
+                          <TripItineraryTimeline trip={trip} />
+                        </div>
                         {canShowWeather ? (
                           <div className="trip-weather-fold">
                             <button
