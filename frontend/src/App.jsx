@@ -463,6 +463,7 @@ function ClusteredTripMarkers({
   selectedTripIdsSet,
   hasExplicitSelection,
   onToggleTripSelection,
+  onShowTripDetail,
 }) {
   const map = useMap();
 
@@ -486,7 +487,10 @@ function ClusteredTripMarkers({
           icon: pinIcon,
           opacity: shouldHighlight ? 1 : 0.55,
         });
-        marker.on("click", () => onToggleTripSelection(trip.id));
+        marker.on("click", () => {
+          onToggleTripSelection(trip.id);
+          onShowTripDetail(trip, point.label || `Stop ${idx + 1}`);
+        });
         marker.bindPopup(buildTripPopupHtml(trip, point.label || `Stop ${idx + 1}`));
         clusterGroup.addLayer(marker);
       });
@@ -582,6 +586,23 @@ function TripPopupContent({ trip, stopLabel }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+function MapTripDetailPanel({ trip, stopLabel, onClose }) {
+  if (!trip) return null;
+  return (
+    <aside className="map-detail-panel" role="dialog" aria-label="Trip details">
+      <button
+        type="button"
+        className="map-detail-close"
+        onClick={onClose}
+        aria-label="Close trip details"
+      >
+        x
+      </button>
+      <TripPopupContent trip={trip} stopLabel={stopLabel} />
+    </aside>
   );
 }
 
@@ -1169,6 +1190,7 @@ export default function App() {
   const [expandedWeatherTripIds, setExpandedWeatherTripIds] = useState([]);
   const [calendarSyncTripId, setCalendarSyncTripId] = useState(null);
   const [focusedTripId, setFocusedTripId] = useState(null);
+  const [mapDetail, setMapDetail] = useState(null);
   const [showMarkerClusters, setShowMarkerClusters] = useState(true);
   const [showHeatmap, setShowHeatmap] = useState(true);
   const [isPersonFilterOpen, setIsPersonFilterOpen] = useState(false);
@@ -1313,6 +1335,10 @@ export default function App() {
     () => displayedTrips.find((trip) => trip.id === focusedTripId) || null,
     [displayedTrips, focusedTripId]
   );
+  const mapDetailTrip = useMemo(() => {
+    if (!mapDetail) return null;
+    return displayedTrips.find((trip) => trip.id === mapDetail.tripId) || null;
+  }, [displayedTrips, mapDetail]);
   const formWeatherTrip = useMemo(() => {
     let route = [];
     try {
@@ -1353,6 +1379,7 @@ export default function App() {
     setExpandedWeatherTripIds((prev) => prev.filter((id) => validIds.has(id)));
     setFocusedTripId((prev) => (prev && validIds.has(prev) ? prev : null));
     setCalendarSyncTripId((prev) => (prev && validIds.has(prev) ? prev : null));
+    setMapDetail((prev) => (prev && validIds.has(prev.tripId) ? prev : null));
   }, [displayedTrips]);
 
   useEffect(() => {
@@ -1381,6 +1408,10 @@ export default function App() {
       }
       return next;
     });
+  };
+
+  const showTripDetail = (trip, stopLabel = "") => {
+    setMapDetail({ tripId: trip.id, stopLabel });
   };
 
   const toggleTripWeather = (tripId) => {
@@ -2688,6 +2719,9 @@ export default function App() {
                   {coords.length > 1 ? (
                     <Polyline
                       positions={coords}
+                      eventHandlers={{
+                        click: () => showTripDetail(trip),
+                      }}
                       pathOptions={{
                         color: shouldHighlight ? "#e55f2b" : "#3388ff",
                         weight: shouldHighlight ? 6 : 3,
@@ -2708,6 +2742,7 @@ export default function App() {
                 selectedTripIdsSet={selectedTripIdsSet}
                 hasExplicitSelection={hasExplicitSelection}
                 onToggleTripSelection={toggleTripSelection}
+                onShowTripDetail={showTripDetail}
               />
             ) : (
               displayedTrips.map((trip) => {
@@ -2720,7 +2755,10 @@ export default function App() {
                     icon={pinIcon}
                     opacity={shouldHighlight ? 1 : 0.55}
                     eventHandlers={{
-                      click: () => toggleTripSelection(trip.id),
+                      click: () => {
+                        toggleTripSelection(trip.id);
+                        showTripDetail(trip, point.label || "Stop");
+                      },
                     }}
                   >
                     <Popup>
@@ -2741,6 +2779,11 @@ export default function App() {
               ))
             )}
           </MapContainer>
+          <MapTripDetailPanel
+            trip={mapDetailTrip}
+            stopLabel={mapDetail?.stopLabel || ""}
+            onClose={() => setMapDetail(null)}
+          />
         </section>
 
       </main>
