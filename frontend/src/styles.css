@@ -882,38 +882,44 @@ button:disabled {
   overflow: hidden;
 }
 
-.map-detail-panel {
-  position: absolute;
-  top: 4.9rem;
-  right: 1.05rem;
-  z-index: 800;
-  width: min(360px, calc(100% - 2.1rem));
-  max-height: calc(100% - 6.2rem);
-  overflow: auto;
-  border: 1px solid #d8e2ea;
+.map-inline-popup .leaflet-popup-content-wrapper {
   border-radius: 8px;
-  background: #ffffffef;
-  box-shadow: 0 16px 26px rgba(18, 33, 47, 0.2);
-  padding: 0.75rem 0.8rem 0.7rem;
+  background: #fffffffa;
 }
 
-.map-detail-close {
+.map-inline-popup .leaflet-popup-content {
+  margin: 0;
+}
+
+.map-inline-popup .leaflet-popup-tip {
+  background: #fffffffa;
+}
+
+.map-inline-detail {
+  min-width: 240px;
+  max-width: 320px;
+  max-height: 330px;
+  overflow: auto;
+  padding: 0.65rem 0.7rem 0.65rem;
+}
+
+.map-inline-close {
   position: sticky;
   top: 0;
   margin-left: auto;
   display: block;
-  width: 28px;
-  height: 28px;
+  width: 24px;
+  height: 24px;
   border-radius: 999px;
   background: #dfe8f2;
   color: #1f3649;
   padding: 0;
   line-height: 1;
-  font-size: 0.95rem;
+  font-size: 0.85rem;
   font-weight: 800;
 }
 
-.map-detail-close:hover {
+.map-inline-close:hover {
   background: #cfdbe8;
 }
 

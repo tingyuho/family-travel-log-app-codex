@@ -425,39 +425,6 @@ function MapFocus({ selectedTrips }) {
   return null;
 }
 
-function escapeHtml(value) {
-  return String(value ?? "")
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#39;");
-}
-
-function buildTripPopupHtml(trip, stopLabel) {
-  const stays = (trip.accommodations || [])
-    .map((stay) => {
-      const stayName = escapeHtml(stay.name || "Stay");
-      const stayLocation = stay.location ? `, ${escapeHtml(stay.location)}` : "";
-      const stayDates = stay.check_in || stay.check_out
-        ? ` (${escapeHtml(stay.check_in || "?")} - ${escapeHtml(stay.check_out || "?")})`
-        : "";
-      return `<li>${stayName}${stayLocation}${stayDates}</li>`;
-    })
-    .join("");
-
-  return `
-    <div class="trip-popup">
-      <h4>${escapeHtml(trip.title || "Trip")}</h4>
-      ${stopLabel ? `<p><strong>Stop:</strong> ${escapeHtml(stopLabel)}</p>` : ""}
-      <p><strong>Dates:</strong> ${escapeHtml(trip.start_date || "Unknown start")} - ${escapeHtml(trip.end_date || "Unknown end")}</p>
-      ${trip.notes ? `<p>${escapeHtml(trip.notes)}</p>` : ""}
-      ${(trip.people || []).length ? `<p><strong>People:</strong> ${(trip.people || []).map(escapeHtml).join(", ")}</p>` : ""}
-      ${stays ? `<div><strong>Stays:</strong><ul>${stays}</ul></div>` : ""}
-    </div>
-  `;
-}
-
 function ClusteredTripMarkers({
   trips,
   selectedTripIdsSet,
@@ -489,9 +456,8 @@ function ClusteredTripMarkers({
         });
         marker.on("click", () => {
           onToggleTripSelection(trip.id);
-          onShowTripDetail(trip, point.label || `Stop ${idx + 1}`);
+          onShowTripDetail(trip, point.label || `Stop ${idx + 1}`, [point.lat, point.lng]);
         });
-        marker.bindPopup(buildTripPopupHtml(trip, point.label || `Stop ${idx + 1}`));
         clusterGroup.addLayer(marker);
       });
     });
@@ -500,7 +466,7 @@ function ClusteredTripMarkers({
     return () => {
       map.removeLayer(clusterGroup);
     };
-  }, [map, trips, selectedTripIdsSet, hasExplicitSelection, onToggleTripSelection]);
+  }, [map, trips, selectedTripIdsSet, hasExplicitSelection, onToggleTripSelection, onShowTripDetail]);
 
   return null;
 }
@@ -586,23 +552,6 @@ function TripPopupContent({ trip, stopLabel }) {
         </div>
       ) : null}
     </div>
-  );
-}
-
-function MapTripDetailPanel({ trip, stopLabel, onClose }) {
-  if (!trip) return null;
-  return (
-    <aside className="map-detail-panel" role="dialog" aria-label="Trip details">
-      <button
-        type="button"
-        className="map-detail-close"
-        onClick={onClose}
-        aria-label="Close trip details"
-      >
-        x
-      </button>
-      <TripPopupContent trip={trip} stopLabel={stopLabel} />
-    </aside>
   );
 }
 
@@ -1410,8 +1359,9 @@ export default function App() {
     });
   };
 
-  const showTripDetail = (trip, stopLabel = "") => {
-    setMapDetail({ tripId: trip.id, stopLabel });
+  const showTripDetail = (trip, stopLabel = "", position = null) => {
+    const fallback = trip.route?.[0] ? [trip.route[0].lat, trip.route[0].lng] : null;
+    setMapDetail({ tripId: trip.id, stopLabel, position: position || fallback });
   };
 
   const toggleTripWeather = (tripId) => {
@@ -2720,18 +2670,14 @@ export default function App() {
                     <Polyline
                       positions={coords}
                       eventHandlers={{
-                        click: () => showTripDetail(trip),
+                        click: (event) => showTripDetail(trip, "", [event.latlng.lat, event.latlng.lng]),
                       }}
                       pathOptions={{
                         color: shouldHighlight ? "#e55f2b" : "#3388ff",
                         weight: shouldHighlight ? 6 : 3,
                         opacity: shouldHighlight ? 0.9 : 0.2,
                       }}
-                    >
-                      <Popup>
-                        <TripPopupContent trip={trip} />
-                      </Popup>
-                    </Polyline>
+                    />
                   ) : null}
                 </Fragment>
               );
@@ -2757,14 +2703,10 @@ export default function App() {
                     eventHandlers={{
                       click: () => {
                         toggleTripSelection(trip.id);
-                        showTripDetail(trip, point.label || "Stop");
+                        showTripDetail(trip, point.label || "Stop", [point.lat, point.lng]);
                       },
                     }}
-                  >
-                    <Popup>
-                      <TripPopupContent trip={trip} stopLabel={point.label || "Stop"} />
-                    </Popup>
-                  </Marker>
+                  />
                 ));
               })
             )}
@@ -2778,12 +2720,29 @@ export default function App() {
                 />
               ))
             )}
+            {mapDetailTrip && mapDetail?.position ? (
+              <Popup
+                position={mapDetail.position}
+                closeButton={false}
+                autoClose={false}
+                closeOnClick={false}
+                className="map-inline-popup"
+                offset={[16, -22]}
+              >
+                <div className="map-inline-detail">
+                  <button
+                    type="button"
+                    className="map-inline-close"
+                    onClick={() => setMapDetail(null)}
+                    aria-label="Close trip details"
+                  >
+                    x
+                  </button>
+                  <TripPopupContent trip={mapDetailTrip} stopLabel={mapDetail.stopLabel || ""} />
+                </div>
+              </Popup>
+            ) : null}
           </MapContainer>
-          <MapTripDetailPanel
-            trip={mapDetailTrip}
-            stopLabel={mapDetail?.stopLabel || ""}
-            onClose={() => setMapDetail(null)}
-          />
         </section>
 
       </main>
