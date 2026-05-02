@@ -2,6 +2,10 @@
 
 Full-stack web app for tracking family trips with route mapping, searchable notes, travel companions, and accommodation details.
 
+## Demo
+
+![Family Travel Log dashboard demo](docs/images/family-travel-log-demo.png)
+
 ## Stack
 
 - Backend: FastAPI + SQLite locally or Postgres via `DATABASE_URL`
