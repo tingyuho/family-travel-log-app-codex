@@ -57,15 +57,15 @@ Run these checks on an iPhone or iOS development build. Android and Expo Web are
 
 ## Hosted deployment checks
 
-- [ ] Render `/health/db` reports `database: postgres`.
-- [ ] Vercel production build uses the deployed HTTPS API origin.
-- [ ] `npm run production:verify` passes with the final browser and API origins.
-- [ ] Production CORS allows the exact browser origin and no wildcard/regex fallback.
+- [x] Render `/health/db` reports `database: postgres` (verified October 13, 2026).
+- [x] Vercel production build uses the deployed HTTPS API origin.
+- [x] `npm run production:verify` passes with the final browser and API origins.
+- [x] Production CORS allows the exact browser origin and no wildcard/regex fallback.
 - [ ] Render and Vercel deploy only after the release confidence workflow passes.
 
 ## iOS distribution checks
 
-- [ ] `npm run release:ios:preflight` passes.
+- [x] `npm run release:ios:preflight` passes (verified October 13, 2026).
 - [ ] EAS production environment contains the HTTPS API URL and restricted Maps key.
 - [ ] Production profile creates a store build and auto-increments its build number.
 - [ ] Real-device smoke checklist passes on the release candidate.
@@ -75,7 +75,7 @@ Run these checks on an iPhone or iOS development build. Android and Expo Web are
 
 - [ ] Repository variables configure the hourly production verification workflow.
 - [ ] At least two maintainers receive failed-workflow notifications.
-- [ ] Backend logs include request IDs and release identifiers without sensitive payloads.
+- [x] Backend logs include request IDs and release identifiers without sensitive payloads.
 - [ ] Managed PostgreSQL backups are enabled and their retention meets the RPO.
 - [ ] A fresh backup passes `npm run backend:backup:verify -- PATH_TO_DUMP`.
 - [ ] A disposable-database restore drill has been completed and recorded.
