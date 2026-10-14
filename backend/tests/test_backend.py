@@ -1,13 +1,16 @@
 from __future__ import annotations
 
 import asyncio
+import json
+import logging.config
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
 from fastapi import HTTPException
 
 from backend.app import db, main, repository
-from backend.app.operations import OperationsMiddleware
+from backend.app.operations import LOGGER, OperationsMiddleware
 from backend.app.schemas import (
     PackingTemplateCreate,
     PackingTemplateUpdate,
@@ -75,7 +78,23 @@ def test_invalid_request_id_is_replaced():
     assert len(request_id) == 32
 
 
-def run_operations_request(request_id: str):
+def test_production_request_logs_emit_json_without_query_data(capsys):
+    previous = (LOGGER.handlers[:], LOGGER.level, LOGGER.propagate)
+    config = json.loads((Path(__file__).parents[1] / "logging.json").read_text())
+    try:
+        logging.config.dictConfig(config)
+        run_operations_request("logging-test", query_string=b"token=private-query-value")
+        output = capsys.readouterr().out
+        event = json.loads(output)
+        assert event["request_id"] == "logging-test"
+        assert event["status"] == 200
+        assert event["path"] == "/health"
+        assert "private-query-value" not in output
+    finally:
+        LOGGER.handlers, LOGGER.level, LOGGER.propagate = previous
+
+
+def run_operations_request(request_id: str, query_string: bytes = b""):
     messages = []
 
     async def app(scope, receive, send):
@@ -92,6 +111,7 @@ def run_operations_request(request_id: str):
         "type": "http",
         "method": "GET",
         "path": "/health",
+        "query_string": query_string,
         "headers": [(b"x-request-id", request_id.encode("ascii"))],
     }
     asyncio.run(OperationsMiddleware(app)(scope, receive, send))
