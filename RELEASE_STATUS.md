@@ -1,4 +1,4 @@
-# Release milestone status — October 13, 2026
+# Release milestone status — updated October 14, 2026
 
 Goal: hosted web app and an iPhone release candidate using the production backend.
 The hosted web/backend deployment is verified. The milestone remains open until
@@ -39,13 +39,21 @@ the TestFlight build, real iPhone checks, and operations handoff pass.
 - Set the EAS production API origin and included the existing sensitive Maps key
   in production. Its Google platform restrictions still need owner verification.
 - Added an iPhone login/navigation/logout Maestro flow and encryption metadata.
+- Confirmed matching active App Store signing credentials for
+  `com.tyhotw.familytravellogmobile` and configured App Store Connect app ID
+  `6778994659`.
+- Production iOS version `1.0.0`, build `2`, finished successfully on October 14.
+  EAS build: https://expo.dev/accounts/tyhotw/projects/family-travel-log-mobile/builds/6e8f48a8-39f6-462a-93bd-20975baf5355.
 
 ## Remaining gates
 
-1. **Apple signing and TestFlight.** The attempted noninteractive EAS store build
-   stopped because production signing credentials are not configured. Configure
-   them with `eas credentials --platform ios` from `apps/mobile`, provide the numeric
-   App Store Connect app ID, then build and upload the release candidate.
+1. **TestFlight upload credential.** The signed production build is complete.
+   Noninteractive submission stopped because an App Store Connect API key is not
+   assigned to this app. From `apps/mobile`, run `eas credentials --platform ios`,
+   select `production`, then `App Store Connect: Manage your API Key` and
+   `Set up your project to use an API Key for EAS Submit`. Once configured, submit
+   build `6e8f48a8-39f6-462a-93bd-20975baf5355`; no rebuild is needed. TestFlight upload
+   and Apple processing have not yet been completed.
 2. **Real iPhone acceptance.** Run the authenticated Maestro flow plus the full
    manual checklist in `apps/mobile/ROLL_OUT_CHECKLIST.md`. No real-device pass
    has been claimed. Complete the remaining hosted web checks for people, packing,

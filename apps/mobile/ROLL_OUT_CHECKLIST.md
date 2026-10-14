@@ -52,8 +52,8 @@ before signing in as the test account. Run the remaining checks below manually.
 
 ## Release Readiness
 - [ ] `npm run mobile:export:ios` succeeds.
-- [ ] `npm run mobile:build:ios:production` succeeds in EAS.
-- [ ] Production build number increments remotely.
+- [x] `npm run mobile:build:ios:production` succeeds in EAS (1.0.0 build 2, October 14, 2026).
+- [x] Production build number increments remotely (build 2).
 - [ ] Backend health and auth endpoints reachable from device.
 - [ ] Critical flows pass: login, trip create/edit, people reorder, packing checklist, calendar actions.
 - [ ] Feature flags set for staged rollout strategy.
