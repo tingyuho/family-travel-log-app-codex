@@ -595,7 +595,7 @@ export default function App() {
                   <SegmentButton label="Login" active={authMode === "login"} onPress={() => setAuthMode("login")} />
                   <SegmentButton label="Register" active={authMode === "register"} onPress={() => setAuthMode("register")} />
                 </View>
-                <Field label="User ID" value={userId} onChangeText={setUserId} autoCapitalize="none" />
+                <Field label="User ID" testID="auth-user-id" value={userId} onChangeText={setUserId} autoCapitalize="none" />
                 {authMode === "register" ? (
                   <Field
                     label="Email"
@@ -605,7 +605,7 @@ export default function App() {
                     keyboardType="email-address"
                   />
                 ) : null}
-                <Field label="Password" value={password} onChangeText={setPassword} secureTextEntry />
+                <Field label="Password" testID="auth-password" value={password} onChangeText={setPassword} secureTextEntry />
                 {authMode === "register" ? (
                   <Field
                     label="Confirm Password"
@@ -615,6 +615,7 @@ export default function App() {
                   />
                 ) : null}
                 <Pressable
+                  testID="auth-submit"
                   accessibilityRole="button"
                   accessibilityLabel={authMode === "login" ? "Login" : "Register"}
                   accessibilityState={{ disabled: busy }}

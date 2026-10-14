@@ -6,6 +6,7 @@ export type AppStyles = Record<string, AppStyle>;
 
 export type FieldProps = {
   label: string;
+  testID?: string;
   value: string;
   onChangeText: (value: string) => void;
   multiline?: boolean;

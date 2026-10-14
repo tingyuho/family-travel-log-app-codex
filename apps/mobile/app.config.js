@@ -34,6 +34,9 @@ const expoConfig = {
 expoConfig.ios = {
   bundleIdentifier: iosBundleIdentifier,
   supportsTablet: false,
+  infoPlist: {
+    ITSAppUsesNonExemptEncryption: false,
+  },
 };
 
 if (googleMapsApiKey) {

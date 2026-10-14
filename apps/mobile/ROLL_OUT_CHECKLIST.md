@@ -28,6 +28,15 @@
 - [ ] Maestro smoke flow executes on at least one real device.
 
 ## Real Device Smoke Checklist
+For the automated login/navigation/logout flow, use a dedicated test account:
+
+```bash
+maestro test -e TEST_USER_ID=YOUR_TEST_USER -e TEST_PASSWORD=YOUR_TEST_PASSWORD apps/mobile/e2e/maestro/authenticated.yaml
+```
+
+This flow does not clear app storage or modify trips. It logs out any active session
+before signing in as the test account. Run the remaining checks below manually.
+
 - [ ] Login and logout.
 - [ ] Create trip, edit trip, and delete trip.
 - [ ] Drag/zoom map and tap route stop to focus selected trip.

@@ -5,6 +5,17 @@ and the Expo iOS app. Android and Expo Web are outside this release.
 
 ## Phase 3 — PostgreSQL and FastAPI
 
+The existing deployment uses `family-travel-log-app-codex.onrender.com` and the Neon
+`family-trip-app` PostgreSQL project. Reuse these resources for this release rather
+than applying the new-install Blueprint and creating a second database. The existing
+browser domain is `family-travel-log-app-codex.vercel.app`. Vercel must build from the
+repository root so it can use the workspaces and root `vercel.json`; remove any legacy
+`frontend` root-directory override in the project settings.
+
+Before updating the existing backend, create a Neon recovery branch and validate
+startup/contract behavior on an isolated database branch. Never use the production
+connection for `backend:test:postgres`.
+
 1. In Render, create a Blueprint from this repository's `render.yaml`.
 2. Supply `FRONTEND_ORIGINS` with the final HTTPS browser origin. Render creates
    `family-travel-log-db` and injects its connection string into the API service.
