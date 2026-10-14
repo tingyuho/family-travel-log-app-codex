@@ -1,0 +1,53 @@
+{
+  "name": "@app/mobile",
+  "private": true,
+  "version": "1.0.0",
+  "main": "index.js",
+  "scripts": {
+    "start": "node ./scripts/run-expo.js start",
+    "start:dev-client": "node ./scripts/run-expo.js start --dev-client",
+    "mobile:start:clear": "npm run start -- --clear",
+    "mobile:start:dev-client": "npm run start:dev-client",
+    "android": "node ./scripts/run-expo.js run:android",
+    "ios": "node ./scripts/run-expo.js run:ios",
+    "mobile:ios:dev": "npm run ios",
+    "mobile:android:dev": "npm run android",
+    "export:ios": "node ./scripts/run-expo.js export --platform ios --output-dir .expo-export-check/ios",
+    "contract:snapshot": "cd ../.. && backend\\.venv\\Scripts\\python.exe -c \"import json; from backend.app.main import app; print(json.dumps(app.openapi(), indent=2))\" > apps/mobile/openapi.snapshot.json",
+    "test": "jest",
+    "test:unit": "jest --config jest.config.cjs --runInBand __tests__/unit",
+    "test:integration": "jest --config jest.config.cjs --runInBand __tests__/integration",
+    "test:contract": "node ./scripts/check-openapi-contract.js",
+    "test:e2e:smoke": "node ./scripts/e2e-smoke-check.js",
+    "build:ios:dev": "eas build --platform ios --profile development",
+    "build:ios:production": "eas build --platform ios --profile production",
+    "submit:ios:production": "eas submit --platform ios --profile production --latest",
+    "build:android:dev": "eas build --platform android --profile development",
+    "mobile:build:ios:dev": "npm run build:ios:dev",
+    "mobile:build:ios:production": "npm run build:ios:production",
+    "mobile:submit:ios:production": "npm run submit:ios:production",
+    "mobile:build:android:dev": "npm run build:android:dev"
+  },
+  "dependencies": {
+    "expo": "~54.0.34",
+    "expo-constants": "~18.0.10",
+    "expo-dev-client": "~6.0.21",
+    "expo-file-system": "~19.0.21",
+    "expo-sharing": "~14.0.8",
+    "expo-sqlite": "~16.0.10",
+    "expo-status-bar": "~3.0.9",
+    "react": "19.1.0",
+    "react-native": "0.81.5",
+    "react-native-maps": "1.20.1",
+    "react-native-safe-area-context": "~5.6.0"
+  },
+  "devDependencies": {
+    "@types/jest": "^29.5.14",
+    "@types/react": "~19.1.10",
+    "babel-preset-expo": "~54.0.10",
+    "eas-cli": "^20.1.0",
+    "jest": "^29.7.0",
+    "jest-expo": "~54.0.8",
+    "typescript": "^5.7.2"
+  }
+}

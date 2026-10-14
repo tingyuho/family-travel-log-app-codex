@@ -11,6 +11,7 @@ SCRYPT_R = 8
 SCRYPT_P = 1
 SCRYPT_SALT_BYTES = 16
 SCRYPT_KEY_BYTES = 32
+RESET_CODE_SCHEME = "reset_scrypt_sha256"
 
 
 def hash_password(password: str) -> str:
@@ -90,8 +91,44 @@ def generate_reset_code(length: int = 6) -> str:
 
 
 def hash_reset_code(code: str) -> str:
-    return hashlib.sha256(code.encode("utf-8")).hexdigest()
+    salt = secrets.token_bytes(SCRYPT_SALT_BYTES)
+    code_hash = hashlib.scrypt(
+        code.encode("utf-8"),
+        salt=salt,
+        n=SCRYPT_N,
+        r=SCRYPT_R,
+        p=SCRYPT_P,
+        dklen=SCRYPT_KEY_BYTES,
+    )
+    return "$".join(
+        [
+            RESET_CODE_SCHEME,
+            str(SCRYPT_N),
+            str(SCRYPT_R),
+            str(SCRYPT_P),
+            salt.hex(),
+            code_hash.hex(),
+        ]
+    )
 
 
 def verify_reset_code(code: str, code_hash: str) -> bool:
-    return hmac.compare_digest(hash_reset_code(code), code_hash)
+    if is_legacy_sha256_hash(code_hash):
+        return hmac.compare_digest(hashlib.sha256(code.encode("utf-8")).hexdigest(), code_hash)
+
+    try:
+        scheme, n, r, p, salt_hex, stored_hash_hex = code_hash.split("$", 5)
+        if scheme != RESET_CODE_SCHEME:
+            return False
+        stored_hash = bytes.fromhex(stored_hash_hex)
+        candidate = hashlib.scrypt(
+            code.encode("utf-8"),
+            salt=bytes.fromhex(salt_hex),
+            n=int(n),
+            r=int(r),
+            p=int(p),
+            dklen=len(stored_hash),
+        )
+        return hmac.compare_digest(candidate, stored_hash)
+    except (TypeError, ValueError):
+        return False
