@@ -7,7 +7,7 @@
     "dev": "vite",
     "build": "node ../../scripts/build-web.js",
     "preview": "vite preview",
-    "test": "node --test tests/*.test.mjs"
+    "test": "node scripts/run-tests.cjs"
   },
   "dependencies": {
     "leaflet": "^1.9.4",
