@@ -1,0 +1,32 @@
+# EAS copies the whole git root for workspace builds. Keep generated local files
+# out of the archive, and avoid Windows/OneDrive permission errors from caches.
+node_modules
+frontend
+dist
+.expo
+**/.expo/
+.DS_Store
+*.log
+*.pyc
+.pytest_cache
+**/.pytest_cache/
+.env
+.env.local
+.env.development.local
+
+backend/.venv
+backend/__pycache__
+backend/**/__pycache__/
+backend/travel_log.db
+backend/*.db
+backend/*.sqlite
+backend/*.sqlite3
+
+apps/*/node_modules
+apps/*/dist
+apps/*/.env.local
+apps/*/.env
+
+_archives
+.expo-logs
+apps/mobile/.expo-export-check

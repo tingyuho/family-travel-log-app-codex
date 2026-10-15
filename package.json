@@ -1,0 +1,48 @@
+{
+  "name": "family-travel-log",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "overrides": {
+    "react-native": "0.81.5"
+  },
+  "scripts": {
+    "web:dev": "npm run dev --workspace @app/web",
+    "web:build": "npm run build --workspace @app/web",
+    "web:test": "npm run test --workspace @app/web",
+    "mobile:start": "npm --workspace @app/mobile run start",
+    "mobile:start:clear": "npm --workspace @app/mobile run start -- --clear",
+    "mobile:start:dev-client": "npm --workspace @app/mobile run start -- --dev-client --clear",
+    "mobile:ios:dev": "npm --workspace @app/mobile run ios",
+    "mobile:android:dev": "npm --workspace @app/mobile run android",
+    "mobile:build:ios:dev": "npm --workspace @app/mobile run build:ios:dev",
+    "mobile:build:ios:production": "npm --workspace @app/mobile run build:ios:production",
+    "mobile:submit:ios:production": "npm --workspace @app/mobile run submit:ios:production",
+    "mobile:build:android:dev": "npm --workspace @app/mobile run build:android:dev",
+    "mobile:export:ios": "npm --workspace @app/mobile run export:ios",
+    "mobile:test:unit": "npm --workspace @app/mobile run test:unit",
+    "mobile:test:integration": "npm --workspace @app/mobile run test:integration",
+    "mobile:test:contract": "npm --workspace @app/mobile run test:contract",
+    "mobile:test:e2e:smoke": "npm --workspace @app/mobile run test:e2e:smoke",
+    "backend:check": "backend\\.venv\\Scripts\\python.exe -m compileall backend\\app && backend\\.venv\\Scripts\\python.exe -c \"from backend.app.main import app; assert app.title\"",
+    "backend:test": "backend\\.venv\\Scripts\\python.exe backend\\scripts\\run_tests.py",
+    "backend:test:postgres": "backend\\.venv\\Scripts\\python.exe backend\\scripts\\run_tests.py backend\\tests\\test_postgres_contract.py",
+    "backend:smoke": "backend\\.venv\\Scripts\\python.exe backend\\scripts\\smoke_check.py",
+    "release:check": "node scripts\\release-check.js",
+    "security:secrets": "node scripts\\check-repository-secrets.js",
+    "release:ios:preflight": "node scripts\\ios-release-preflight.js",
+    "release:ios:configure-submit": "node scripts\\configure-eas-submit.js",
+    "production:verify": "node scripts\\verify-production-deployment.js",
+    "backend:dev": "backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --host 127.0.0.1 --port 8000 --app-dir backend",
+    "backend:dev:lan": "backend\\.venv\\Scripts\\python.exe -m uvicorn app.main:app --reload --host 0.0.0.0 --port 8000 --app-dir backend",
+    "backend:backup": "backend\\.venv\\Scripts\\python.exe backend\\scripts\\backup_postgres.py",
+    "backend:backup:verify": "backend\\.venv\\Scripts\\python.exe backend\\scripts\\verify_postgres_backup.py"
+  },
+  "devDependencies": {
+    "@types/react": "~19.1.10",
+    "react-native": "0.81.5"
+  }
+}

@@ -8,6 +8,10 @@ from pathlib import Path
 from typing import Any
 
 from .auth import hash_password
+from .env import load_backend_env, validate_backend_environment
+
+load_backend_env()
+validate_backend_environment()
 
 try:
     import psycopg
@@ -121,6 +125,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
                 id SERIAL PRIMARY KEY,
                 user_id TEXT NOT NULL DEFAULT '',
                 title TEXT NOT NULL,
+                trip_kind TEXT NOT NULL DEFAULT 'past',
                 start_date DATE,
                 end_date DATE,
                 notes TEXT NOT NULL DEFAULT '',
@@ -141,6 +146,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
                 name TEXT NOT NULL,
                 relationship TEXT NOT NULL DEFAULT '',
                 notes TEXT NOT NULL DEFAULT '',
+                sort_order INTEGER NOT NULL DEFAULT 0,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
             """
@@ -152,6 +158,29 @@ def _create_tables(conn: DatabaseConnection) -> None:
                 user_id TEXT NOT NULL DEFAULT '',
                 name TEXT NOT NULL,
                 items_json TEXT NOT NULL DEFAULT '[]',
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS rate_limit_events (
+                id SERIAL PRIMARY KEY,
+                bucket_key TEXT NOT NULL,
+                created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+        conn.execute(
+            """
+            CREATE TABLE IF NOT EXISTS location_search_cache (
+                cache_key TEXT PRIMARY KEY,
+                query_text TEXT NOT NULL,
+                limit_value INTEGER NOT NULL,
+                provider TEXT NOT NULL,
+                payload_json TEXT NOT NULL,
+                expires_at TIMESTAMPTZ NOT NULL,
                 created_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMPTZ NOT NULL DEFAULT CURRENT_TIMESTAMP
             )
@@ -196,6 +225,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             user_id TEXT NOT NULL DEFAULT '',
             title TEXT NOT NULL,
+            trip_kind TEXT NOT NULL DEFAULT 'past',
             start_date TEXT,
             end_date TEXT,
             notes TEXT NOT NULL DEFAULT '',
@@ -216,6 +246,7 @@ def _create_tables(conn: DatabaseConnection) -> None:
             name TEXT NOT NULL,
             relationship TEXT NOT NULL DEFAULT '',
             notes TEXT NOT NULL DEFAULT '',
+            sort_order INTEGER NOT NULL DEFAULT 0,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
         """
@@ -227,6 +258,29 @@ def _create_tables(conn: DatabaseConnection) -> None:
             user_id TEXT NOT NULL DEFAULT '',
             name TEXT NOT NULL,
             items_json TEXT NOT NULL DEFAULT '[]',
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+            updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS rate_limit_events (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            bucket_key TEXT NOT NULL,
+            created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+        )
+        """
+    )
+    conn.execute(
+        """
+        CREATE TABLE IF NOT EXISTS location_search_cache (
+            cache_key TEXT PRIMARY KEY,
+            query_text TEXT NOT NULL,
+            limit_value INTEGER NOT NULL,
+            provider TEXT NOT NULL,
+            payload_json TEXT NOT NULL,
+            expires_at TEXT NOT NULL,
             created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
             updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
         )
@@ -277,12 +331,16 @@ def init_db() -> None:
         # Migrate older DBs that didn't have user ownership columns.
         if not _has_column(conn, "trips", "user_id"):
             conn.execute("ALTER TABLE trips ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        if not _has_column(conn, "trips", "trip_kind"):
+            conn.execute("ALTER TABLE trips ADD COLUMN trip_kind TEXT NOT NULL DEFAULT 'past'")
         if not _has_column(conn, "trips", "itinerary_json"):
             conn.execute("ALTER TABLE trips ADD COLUMN itinerary_json TEXT NOT NULL DEFAULT '[]'")
         if not _has_column(conn, "users", "email"):
             conn.execute("ALTER TABLE users ADD COLUMN email TEXT NOT NULL DEFAULT ''")
         if not _has_column(conn, "people_profiles", "user_id"):
             conn.execute("ALTER TABLE people_profiles ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
+        if not _has_column(conn, "people_profiles", "sort_order"):
+            conn.execute("ALTER TABLE people_profiles ADD COLUMN sort_order INTEGER NOT NULL DEFAULT 0")
         if not _has_column(conn, "packing_templates", "user_id"):
             conn.execute("ALTER TABLE packing_templates ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")
         if not _has_column(conn, "user_sessions", "expires_at"):
@@ -301,6 +359,37 @@ def init_db() -> None:
                 """,
                 (SESSION_TTL_DAYS,),
             )
+            conn.execute(
+                """
+                UPDATE trips
+                SET trip_kind = CASE
+                    WHEN COALESCE(start_date::text, '') = '' AND COALESCE(end_date::text, '') = '' THEN 'wishlist'
+                    ELSE 'past'
+                END
+                WHERE trip_kind IS NULL OR trip_kind = '' OR trip_kind NOT IN ('past', 'wishlist')
+                """
+            )
+            conn.execute(
+                """
+                UPDATE trips
+                SET trip_kind = 'wishlist'
+                WHERE trip_kind = 'past'
+                  AND COALESCE(start_date::text, '') = ''
+                  AND COALESCE(end_date::text, '') = ''
+                """
+            )
+            conn.execute(
+                """
+                WITH ranked AS (
+                    SELECT id, ROW_NUMBER() OVER (PARTITION BY user_id ORDER BY sort_order ASC, created_at ASC, id ASC) AS rn
+                    FROM people_profiles
+                )
+                UPDATE people_profiles p
+                SET sort_order = ranked.rn
+                FROM ranked
+                WHERE p.id = ranked.id
+                """
+            )
         else:
             fallback_expiry = (datetime.now(UTC) + timedelta(days=SESSION_TTL_DAYS)).strftime("%Y-%m-%d %H:%M:%S")
             conn.execute(
@@ -311,6 +400,45 @@ def init_db() -> None:
                 """,
                 (fallback_expiry,),
             )
+            conn.execute(
+                """
+                UPDATE trips
+                SET trip_kind = CASE
+                    WHEN IFNULL(start_date, '') = '' AND IFNULL(end_date, '') = '' THEN 'wishlist'
+                    ELSE 'past'
+                END
+                WHERE IFNULL(trip_kind, '') = '' OR trip_kind NOT IN ('past', 'wishlist')
+                """
+            )
+            conn.execute(
+                """
+                UPDATE trips
+                SET trip_kind = 'wishlist'
+                WHERE trip_kind = 'past'
+                  AND IFNULL(start_date, '') = ''
+                  AND IFNULL(end_date, '') = ''
+                """
+            )
+            rows = conn.execute(
+                """
+                SELECT id, user_id
+                FROM people_profiles
+                ORDER BY user_id ASC, sort_order ASC, created_at ASC, id ASC
+                """
+            ).fetchall()
+            current_user = None
+            rank = 0
+            for row in rows:
+                user_id = row["user_id"]
+                if user_id != current_user:
+                    current_user = user_id
+                    rank = 1
+                else:
+                    rank += 1
+                conn.execute(
+                    "UPDATE people_profiles SET sort_order = ? WHERE id = ?",
+                    (rank, row["id"]),
+                )
 
         conn.execute(
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_people_profiles_user_name ON people_profiles(user_id, name)"
@@ -319,12 +447,16 @@ def init_db() -> None:
             "CREATE UNIQUE INDEX IF NOT EXISTS idx_packing_templates_user_name ON packing_templates(user_id, name)"
         )
         conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user ON trips(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_trips_user_kind ON trips(user_id, trip_kind)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_people_profiles_user ON people_profiles(user_id)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_people_profiles_user_sort ON people_profiles(user_id, sort_order)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_packing_templates_user ON packing_templates(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_user ON user_sessions(user_id)")
         conn.execute("CREATE INDEX IF NOT EXISTS idx_user_sessions_expires_at ON user_sessions(expires_at)")
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_password_reset_codes_expires_at ON password_reset_codes(expires_at)"
         )
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_rate_limit_events_bucket_created ON rate_limit_events(bucket_key, created_at)")
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_location_search_cache_expires ON location_search_cache(expires_at)")
 
         _seed_user(conn)

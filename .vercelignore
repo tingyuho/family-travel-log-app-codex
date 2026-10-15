@@ -1,0 +1,14 @@
+.git
+.github
+.agents
+.expo
+_archives
+backend/.venv
+backend/__pycache__
+backend/*.db
+frontend
+apps/mobile/.expo-export-check
+**/node_modules
+*.log
+.env
+.env.*.local
