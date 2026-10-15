@@ -44,16 +44,18 @@ the TestFlight build, real iPhone checks, and operations handoff pass.
   `6778994659`.
 - Production iOS version `1.0.0`, build `2`, finished successfully on October 14.
   EAS build: https://expo.dev/accounts/tyhotw/projects/family-travel-log-mobile/builds/6e8f48a8-39f6-462a-93bd-20975baf5355.
+- Uploaded that exact build to App Store Connect successfully on October 14 using
+  the configured EAS submission credentials. Submission:
+  https://expo.dev/accounts/tyhotw/projects/family-travel-log-mobile/submissions/0e52bd32-ff6f-4efe-8735-82ff77315cd3.
+  Apple processing was still pending when the submission completed.
 
 ## Remaining gates
 
-1. **TestFlight upload credential.** The signed production build is complete.
-   Noninteractive submission stopped because an App Store Connect API key is not
-   assigned to this app. From `apps/mobile`, run `eas credentials --platform ios`,
-   select `production`, then `App Store Connect: Manage your API Key` and
-   `Set up your project to use an API Key for EAS Submit`. Once configured, submit
-   build `6e8f48a8-39f6-462a-93bd-20975baf5355`; no rebuild is needed. TestFlight upload
-   and Apple processing have not yet been completed.
+1. **Apple processing and tester access.** Upload succeeded. Wait for Apple to
+   finish processing version `1.0.0` build `2`, then make the build available to the
+   intended internal testing group. TestFlight page:
+   https://appstoreconnect.apple.com/apps/6778994659/testflight/ios.
+   Tester invitations and public App Store review have not been dispatched.
 2. **Real iPhone acceptance.** Run the authenticated Maestro flow plus the full
    manual checklist in `apps/mobile/ROLL_OUT_CHECKLIST.md`. No real-device pass
    has been claimed. Complete the remaining hosted web checks for people, packing,
