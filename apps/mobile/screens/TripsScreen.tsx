@@ -2,10 +2,12 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
 import { searchPlaces, type AccommodationInput, type ItineraryEventInput, type PersonProfile, type PlaceSuggestion, type Trip } from "../api";
+import QuickStopTripPicker from "../components/QuickStopTripPicker";
 import type { TripDraftForm, TripFilterKind } from "../forms";
 import { getOrderedRoutePoints } from "../mapLayers";
 import type { AppStyles, FieldComponent, SegmentButtonComponent, StateSetter } from "../screenTypes";
 import { groupTripsByTimeline } from "../travelInsights";
+import { tripPickerDateLabel } from "../tripPicker";
 import {
   addDaysToDateString,
   getRouteTextError,
@@ -183,6 +185,8 @@ export default function TripsScreen(props: TripsScreenProps) {
   const [quickStopSuggestions, setQuickStopSuggestions] = useState<PlaceSuggestion[]>([]);
   const [quickStopSearching, setQuickStopSearching] = useState(false);
   const [quickStopError, setQuickStopError] = useState("");
+  const [showQuickStopTripPicker, setShowQuickStopTripPicker] = useState(false);
+  const [quickStopReturnView, setQuickStopReturnView] = useState<"list" | "details">("list");
   const quickStopDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   const routeStops = useMemo(() => parseRouteLines(tripDraft.route_text), [tripDraft.route_text]);
@@ -356,8 +360,10 @@ export default function TripsScreen(props: TripsScreenProps) {
     setTripsView("new");
   }
 
-  function openQuickStop() {
-    const defaultTrip = displayedTrips[0] || allTrips[0] || null;
+  function openQuickStop(trip?: Trip) {
+    const defaultTrip = trip || displayedTrips[0] || allTrips[0] || null;
+    setQuickStopReturnView(trip ? "details" : "list");
+    setShowQuickStopTripPicker(false);
     setQuickStopDraft({
       tripId: defaultTrip?.id || null,
       query: "",
@@ -480,7 +486,8 @@ export default function TripsScreen(props: TripsScreenProps) {
   }
 
   async function saveQuickStop() {
-    if (!quickStopDraft.tripId) {
+    const targetTrip = allTrips.find((trip) => trip.id === quickStopDraft.tripId);
+    if (!targetTrip) {
       setQuickStopError("Choose a trip for this quick stop.");
       return;
     }
@@ -490,7 +497,7 @@ export default function TripsScreen(props: TripsScreenProps) {
     }
 
     const saved = await saveQuickStopToTrip({
-      tripId: quickStopDraft.tripId,
+      tripId: targetTrip.id,
       place: quickStopDraft.place,
       label: quickStopDraft.label.trim() || quickStopDraft.place.display_name.split(",")[0].trim() || "Quick stop",
       notes: quickStopDraft.notes,
@@ -500,7 +507,8 @@ export default function TripsScreen(props: TripsScreenProps) {
       setQuickStopDraft({ tripId: null, query: "", label: "", notes: "", place: null });
       setQuickStopSuggestions([]);
       setQuickStopError("");
-      setTripsView("list");
+      if (quickStopReturnView === "details") setDetailTripId(targetTrip.id);
+      setTripsView(quickStopReturnView);
     }
   }
 
@@ -912,12 +920,12 @@ export default function TripsScreen(props: TripsScreenProps) {
 
   if (tripsView === "quickAdd") {
     const selectedQuickTrip = allTrips.find((trip) => trip.id === quickStopDraft.tripId) || null;
-    const canSaveQuickStop = Boolean(quickStopDraft.tripId && quickStopDraft.place);
+    const canSaveQuickStop = Boolean(selectedQuickTrip && quickStopDraft.place);
 
     return (
       <View style={styles.panel}>
         <View style={styles.sectionHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel="Back to trips list" style={styles.textButton} onPress={() => setTripsView("list")}>
+          <Pressable accessibilityRole="button" accessibilityLabel={quickStopReturnView === "details" ? "Back to trip details" : "Back to trips list"} style={styles.textButton} onPress={() => setTripsView(quickStopReturnView)}>
             <Text style={styles.textButtonLabel}>Back</Text>
           </Pressable>
           <View style={styles.rowCardText}>
@@ -928,32 +936,37 @@ export default function TripsScreen(props: TripsScreenProps) {
 
         <View style={styles.formBlock}>
           <View style={styles.filterGroup}>
-            <Text style={styles.filterGroupTitle}>Choose trip</Text>
-            <View style={styles.segmentWrap}>
-              {allTrips.length ? (
-                allTrips.map((trip) => {
-                  const active = quickStopDraft.tripId === trip.id;
-                  return (
-                    <Pressable
-                      accessibilityRole="button"
-                      accessibilityLabel={`Save quick stop to ${trip.title}`}
-                      accessibilityState={{ selected: active }}
-                      key={`quick-stop-trip-${trip.id}`}
-                      style={[styles.filterChip, active && styles.filterChipActive]}
-                      onPress={() => setQuickStopDraft((prev) => ({ ...prev, tripId: trip.id }))}
-                    >
-                      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{trip.title}</Text>
-                    </Pressable>
-                  );
-                })
-              ) : (
-                <Text style={styles.helperText}>Create a trip before adding quick stops.</Text>
-              )}
+            <Text style={styles.filterGroupTitle}>Adding to</Text>
+            <View style={styles.rowCard}>
+              <View style={styles.rowCardText}>
+                <Text style={styles.cardTitleSmall}>{selectedQuickTrip?.title || "Choose a trip"}</Text>
+                <Text style={styles.cardMeta}>{selectedQuickTrip ? tripPickerDateLabel(selectedQuickTrip, formatDateRange) : "Create a trip before adding quick stops."}</Text>
+              </View>
+              <Pressable
+                accessibilityRole="button"
+                accessibilityLabel="Change trip for quick stop"
+                disabled={!allTrips.length}
+                accessibilityState={{ disabled: !allTrips.length }}
+                style={[styles.tripActionButton, !allTrips.length && styles.disabled]}
+                onPress={() => setShowQuickStopTripPicker(true)}
+              >
+                <Text style={styles.tripActionText}>Change</Text>
+              </Pressable>
             </View>
-            {selectedQuickTrip ? (
-              <Text style={styles.helperText}>Adding to {selectedQuickTrip.title}</Text>
-            ) : null}
           </View>
+          {showQuickStopTripPicker ? (
+            <QuickStopTripPicker
+              trips={allTrips}
+              selectedTripId={quickStopDraft.tripId}
+              formatDateRange={formatDateRange}
+              onClose={() => setShowQuickStopTripPicker(false)}
+              onSelect={(trip) => {
+                setQuickStopDraft((prev) => ({ ...prev, tripId: trip.id }));
+                setQuickStopError("");
+                setShowQuickStopTripPicker(false);
+              }}
+            />
+          ) : null}
 
           <Field
             label="Find place"
@@ -997,6 +1010,9 @@ export default function TripsScreen(props: TripsScreenProps) {
             placeholder="One quick reminder..."
           />
 
+          <Text style={styles.helperText} accessibilityLiveRegion="polite">
+            {selectedQuickTrip ? `Saving this stop to ${selectedQuickTrip.title} · ${tripPickerDateLabel(selectedQuickTrip, formatDateRange)}` : "Choose a trip before saving."}
+          </Text>
           <View style={styles.actionRow}>
             <Pressable
               accessibilityRole="button"
@@ -1008,11 +1024,11 @@ export default function TripsScreen(props: TripsScreenProps) {
             >
               <Text style={styles.primaryButtonText}>Save Stop</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Cancel quick stop" style={styles.secondaryButton} onPress={() => setTripsView("list")}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Cancel quick stop" style={styles.secondaryButton} onPress={() => setTripsView(quickStopReturnView)}>
               <Text style={styles.secondaryButtonText}>Cancel</Text>
             </Pressable>
           </View>
-          <Text style={styles.helperText}>First release note: current GPS location can come later; this version saves a searched place.</Text>
+          <Text style={styles.helperText}>Search for a place and choose a result before saving your stop.</Text>
         </View>
       </View>
     );
@@ -1120,6 +1136,14 @@ export default function TripsScreen(props: TripsScreenProps) {
           <Text style={styles.cardMeta}>{formatDateRange(detailTrip.start_date, detailTrip.end_date)}</Text>
           <Text style={styles.cardText}>{detailTrip.notes || "No notes saved."}</Text>
           <View style={styles.actionRowWrap}>
+            <Pressable
+              accessibilityRole="button"
+              accessibilityLabel={`Add quick stop to ${detailTrip.title}`}
+              style={styles.tripActionButton}
+              onPress={() => openQuickStop(detailTrip)}
+            >
+              <Text style={styles.tripActionText}>Quick Stop</Text>
+            </Pressable>
             <Pressable
               accessibilityRole="button"
               accessibilityLabel={`Edit ${detailTrip.title}`}
@@ -1255,7 +1279,7 @@ export default function TripsScreen(props: TripsScreenProps) {
           accessibilityRole="button"
           accessibilityLabel="Quick add a stop"
           style={styles.tripActionButton}
-          onPress={openQuickStop}
+          onPress={() => openQuickStop()}
         >
           <Text style={styles.tripActionText}>Quick Stop</Text>
         </Pressable>
