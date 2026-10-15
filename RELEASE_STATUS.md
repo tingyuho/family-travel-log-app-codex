@@ -1,4 +1,4 @@
-# Release milestone status — updated October 14, 2026
+# Release milestone status — updated October 15, 2026
 
 Goal: hosted web app and an iPhone release candidate using the production backend.
 The hosted web/backend deployment is verified. The milestone remains open until
@@ -49,10 +49,28 @@ the TestFlight build, real iPhone checks, and operations handoff pass.
   https://expo.dev/accounts/tyhotw/projects/family-travel-log-mobile/submissions/0e52bd32-ff6f-4efe-8735-82ff77315cd3.
   Apple processing was still pending when the submission completed.
 
+## Quick Stop picker update — build 3
+
+The Quick Stop form now displays one selected trip with its dates and a Change
+button. Change opens a native picker with five recent trips, search across all trips
+by name/date, and a scrollable Show all list. The selected row is marked. Changing
+trips preserves the place, stop label, and note. The destination is repeated above
+Save Stop. Trip Details includes Quick Stop with the current trip preselected.
+
+Version `1.0.0` build `3` was built and uploaded to Apple on October 15. Apple
+processing was pending at submission completion. Build:
+https://expo.dev/accounts/tyhotw/projects/family-travel-log-mobile/builds/3aab9b11-f33e-47cf-ab47-1411e699ee84.
+Submission:
+https://expo.dev/accounts/tyhotw/projects/family-travel-log-mobile/submissions/d39bd211-2394-4ad1-a465-86c4d33b4679.
+
+Validation includes a 500-trip dataset, picker search/selection/dismissal interaction,
+mobile TypeScript, API integration tests, production iOS export, and a successful
+signed native iOS build. Real iPhone acceptance remains to be run on build 3.
+
 ## Remaining gates
 
 1. **Apple processing and tester access.** Upload succeeded. Wait for Apple to
-   finish processing version `1.0.0` build `2`, then make the build available to the
+   finish processing version `1.0.0` build `3`, then make the build available to the
    intended internal testing group. TestFlight page:
    https://appstoreconnect.apple.com/apps/6778994659/testflight/ios.
    Tester invitations and public App Store review have not been dispatched.

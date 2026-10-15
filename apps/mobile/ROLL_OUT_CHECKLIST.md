@@ -27,7 +27,19 @@
 - [ ] Backend API smoke check passes (`npm run backend:smoke`).
 - [ ] Maestro smoke flow executes on at least one real device.
 
+## Quick Stop trip picker (build 3)
+
+- [ ] Quick Stop shows one selected trip with dates, without a wall of trip badges.
+- [ ] Change opens a picker showing up to five recent trips.
+- [ ] Search finds older trips by name or date, even before Show all is tapped.
+- [ ] Show all opens the complete scrollable list; the selected trip has a checkmark.
+- [ ] Closing the picker keeps the previous selection.
+- [ ] Changing the trip preserves the searched place, label, and quick note.
+- [ ] The trip name and dates above Save Stop match the intended destination trip.
+- [ ] Trip Details → Quick Stop preselects that trip and returns to details after saving/canceling.
+
 ## Real Device Smoke Checklist
+
 For the automated login/navigation/logout flow, use a dedicated test account:
 
 ```bash
