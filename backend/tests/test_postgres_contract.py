@@ -3,9 +3,10 @@ from __future__ import annotations
 import os
 
 import pytest
+from fastapi import HTTPException
 
 from backend.app import db, main, repository
-from backend.app.schemas import PackingTemplateCreate, PersonProfileCreate, TripCreate, UserRegister
+from backend.app.schemas import PackingTemplateCreate, PersonProfileCreate, TripCreate, TripUpdate, TripStopCreate, UserRegister
 
 
 pytestmark = pytest.mark.skipif(
@@ -69,3 +70,14 @@ def test_postgres_core_contract_matches_sqlite_flow(postgres_db):
         current_user_id=user_id,
     )
     assert template.items == ["Hat", "Water"]
+
+    assert trip.version == 1
+    edited = main.put_trip(trip.id, TripUpdate(**{**trip.model_dump(), "title": "Edited title"}), user_id)
+    assert edited.version == 2
+    with pytest.raises(HTTPException) as conflict:
+        main.put_trip(trip.id, TripUpdate(**{**trip.model_dump(), "title": "Stale edit"}), user_id)
+    assert conflict.value.status_code == 409
+    stopped = main.post_trip_stop(trip.id, TripStopCreate(point={"lat": 45.5, "lng": -122.6, "label": "Portland"}), user_id)
+    assert stopped.version == 3
+    assert stopped.title == "Edited title"
+    assert len(stopped.route) == 2

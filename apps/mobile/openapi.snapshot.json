@@ -631,6 +631,71 @@
         }
       }
     },
+    "/api/trips/{trip_id}/stops": {
+      "post": {
+        "summary": "Post Trip Stop",
+        "operationId": "post_trip_stop_api_trips__trip_id__stops_post",
+        "parameters": [
+          {
+            "name": "trip_id",
+            "in": "path",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "title": "Trip Id"
+            }
+          },
+          {
+            "name": "authorization",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "Authorization"
+            }
+          }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TripStopCreate"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/Trip"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/people": {
       "get": {
         "summary": "Get People Profiles",
@@ -1593,14 +1658,14 @@
         "properties": {
           "lat": {
             "type": "number",
-            "maximum": 90.0,
-            "minimum": -90.0,
+            "maximum": 90,
+            "minimum": -90,
             "title": "Lat"
           },
           "lng": {
             "type": "number",
-            "maximum": 180.0,
-            "minimum": -180.0,
+            "maximum": 180,
+            "minimum": -180,
             "title": "Lng"
           },
           "label": {
@@ -1619,7 +1684,7 @@
             "anyOf": [
               {
                 "type": "integer",
-                "minimum": 0.0
+                "minimum": 0
               },
               {
                 "type": "null"
@@ -1708,6 +1773,12 @@
             },
             "type": "array",
             "title": "Itinerary"
+          },
+          "version": {
+            "type": "integer",
+            "minimum": 1,
+            "title": "Version",
+            "default": 1
           },
           "id": {
             "type": "integer",
@@ -1814,6 +1885,28 @@
         ],
         "title": "TripCreate"
       },
+      "TripStopCreate": {
+        "properties": {
+          "point": {
+            "$ref": "#/components/schemas/RoutePoint"
+          },
+          "itinerary_event": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/ItineraryEvent"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        },
+        "type": "object",
+        "required": [
+          "point"
+        ],
+        "title": "TripStopCreate"
+      },
       "TripUpdate": {
         "properties": {
           "title": {
@@ -1887,6 +1980,18 @@
             },
             "type": "array",
             "title": "Itinerary"
+          },
+          "version": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "minimum": 1
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Version"
           }
         },
         "type": "object",

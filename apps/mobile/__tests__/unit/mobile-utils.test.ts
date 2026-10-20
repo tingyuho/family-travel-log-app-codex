@@ -57,7 +57,7 @@ describe("mobile utils", () => {
     expect(getStayNightCount("2026-05-04", "2026-05-01")).toBeNull();
   });
 
-  test("buildTripPayload normalizes wishlist dates and strips empty rows", () => {
+  test("buildTripPayload preserves wishlist dates and strips empty rows", () => {
     const payload = buildTripPayload({
       title: "  Tahoe  ",
       trip_kind: "wishlist",
@@ -71,8 +71,8 @@ describe("mobile utils", () => {
     });
 
     expect(payload.title).toBe("Tahoe");
-    expect(payload.start_date).toBeNull();
-    expect(payload.end_date).toBeNull();
+    expect(payload.start_date).toBe("2026-06-01");
+    expect(payload.end_date).toBe("2026-06-10");
     expect(payload.people).toEqual(["Alex", "Sam"]);
     expect(payload.accommodations).toEqual([]);
     expect(payload.itinerary).toEqual([]);
@@ -219,7 +219,7 @@ describe("mobile utils", () => {
           people: [],
           accommodations: [],
           itinerary: [],
-          created_at: "2026-01-01T00:00:00Z",
+          version: 1, created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
         },
         {
@@ -232,7 +232,7 @@ describe("mobile utils", () => {
           people: [],
           accommodations: [],
           itinerary: [],
-          created_at: "2026-01-01T00:00:00Z",
+          version: 1, created_at: "2026-01-01T00:00:00Z",
           updated_at: "2026-01-01T00:00:00Z",
         },
       ],
@@ -334,7 +334,7 @@ function baseTrip(): Trip {
     people: [],
     accommodations: [],
     itinerary: [],
-    created_at: "2026-01-01T00:00:00Z",
+    version: 1, created_at: "2026-01-01T00:00:00Z",
     updated_at: "2026-01-01T00:00:00Z",
   };
 }

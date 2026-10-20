@@ -1,8 +1,102 @@
-# Release milestone status — updated October 15, 2026
+# Release milestone status — updated October 19, 2026
 
 Goal: hosted web app and an iPhone release candidate using the production backend.
 The hosted web/backend deployment is verified. The milestone remains open until
 the TestFlight build, real iPhone checks, and operations handoff pass.
+
+## Modern Planner release candidate — October 19
+
+Release preparation now includes a passing PostgreSQL contract on the isolated Neon
+branch `modern-planner-validation-2026-10-19` (`br-damp-unit-anj7lv77`). Production
+data was not used as a contract-test target. The no-compute recovery checkpoint is
+`pre-modern-planner-2026-10-19` (`br-shiny-cherry-an4qsfnl`).
+
+Live production place search returned HTTP 200 with a real Yosemite Valley result,
+using the dedicated synthetic account `moderncheck_mvg35xjs`. No password or token is
+stored in the repository. Repository secret scanning and iOS release preflight pass.
+The owner will perform the physical iPhone review after the candidate is prepared.
+Publishing and the new signed build remain in progress; no device pass is claimed.
+
+## Modern Planner design — locally verified October 19
+
+- Web uses a sidebar workspace, blue accents, compact trip summaries, and responsive
+  bottom navigation on phones. Saved trip plans have Itinerary, Places, and Stays
+  sections, with travel companions and notes beside the plan on larger screens.
+- Maps have a dedicated full-width view and remain available alongside trip editing.
+  Map layers mount only while visible, avoiding a zero-width heatmap rendering failure.
+- Mobile uses the same palette and control styling, trip totals, and trip-section
+  navigation. Sign-in, family, packing, forms, and map controls share the updated style.
+- Destination artwork is bundled locally as decorative planner artwork. No trip-photo
+  upload or storage feature is implied. The selected Family Journal draft was replaced.
+- The web Add Stop form now calls the dedicated stop endpoint consistently.
+
+Browser verification used a disposable SQLite database: sign-in, reading real saved
+itineraries/places/stays, creating and editing trips, opening the map and returning to
+details, and saving a stop with its dated note all passed. Layouts at 320 px and 390 px
+fit without horizontal scrolling. The local geocoder has no provider credentials;
+stop selection was verified with a cached place fixture, including persisted API data.
+[Desktop design evidence](docs/images/modern-planner-desktop.jpg).
+
+Verification: 31 web tests and 40 mobile tests pass, including trip-section navigation.
+The web production build, mobile TypeScript, and production-configured local iOS export
+pass. Physical iPhone
+visual acceptance and deployment remain outstanding; these are local source changes.
+
+## Reliability improvements — locally verified October 19
+
+- Mobile packing checks survive startup and delayed template loading; account changes
+  cannot copy checks or unfinished trip drafts into another account.
+- Trip and stop saves use the saved response directly. A failed unrelated refresh
+  cannot turn a completed save into a failed result or keep the saved stop form open.
+- Full trip edits use a database version check. Stale edits are rejected with the
+  draft retained and a Review latest action; older unversioned edits are rejected
+  safely. Stop additions use their own operation and preserve concurrent changes.
+- Web drafts are saved per account, recover after refresh, and require Restore or
+  Discard. Restored edits retain the original version and saved family-member names.
+- Web map layers, trip-plan fields, itinerary display, and account UI are extracted
+  into components. Mobile save actions and date controls are extracted as well.
+
+Verification: 31 web tests, 39 mobile tests, 21 SQLite/backend tests, mobile TypeScript,
+web production build, API contract snapshot, repository secret scan, local production
+configuration iOS export, iOS preflight, isolated backend smoke check, and artifact URL
+scan pass. The opt-in PostgreSQL contract test was extended but skipped locally because
+no disposable PostgreSQL test server is configured.
+
+Browser checks against a temporary SQLite database passed immediate-reload draft
+recovery, restoration and saving, clearing after save, stale-edit rejection, retained
+edit versions after reload, reviewing the newer trip, and saving a fresh edit. Two
+simultaneous HTTP stop additions both persisted without reverting the title or people.
+Unauthenticated reads return 401 and legacy full edits return 428. The account screen
+renders after extraction. [Conflict evidence](docs/images/trip-conflict-verification.jpg).
+
+These changes are local. Production PostgreSQL migration, deployment, a new signed
+iOS build, and real iPhone acceptance have not been performed. Follow the trip editing
+compatibility section in DEPLOYMENT.md: backend first, then matching web/iOS clients.
+
+## Local UI improvements — not released
+
+Priorities 1 and 2 of the shared mobile/web usability plan are implemented locally.
+Family Hub's account, profiles, and packing organization remains in place (priority 3 deferred).
+
+- Mobile has labeled bottom navigation; web has labeled main navigation. Logout is in the existing account area.
+- Trip cards open details; explicit Select controls enable map comparison.
+- Wishlist changes retain entered dates, including in API save payloads. Dates remain optional.
+- Trips, drafts, filters, and navigation context are retained across tab changes; returning from a web trip map restores the list position.
+- Trips has direct search, List/Timeline choices, Add Trip, and Add Stop. The web creation form is opened explicitly, with optional details collapsed.
+- Add Stop from the library asks for a trip; from details it uses that trip. Searchable trip selection, save confirmations, pending-save protection, and discard prompts are provided.
+- Web editing preserves saved people without a matching Family Profile unless explicitly unchecked.
+- The earlier mobile map overlap fix remains included. Empty maps show guidance without an overlapping details card.
+
+Local verification: 28 mobile unit/interaction tests, 26 web tests, mobile TypeScript,
+web production bundle, and local iOS bundle export passed. Browser checks used a
+temporary local SQLite database and sample trips: name-only creation, draft retention,
+Add Stop persistence after reload, dated Wishlist save, saved people retention, explicit
+selection, map return path, and a 390px responsive layout. The map return check restored
+the same list scroll position. Location-search results were fixtures; the saved trip
+updates used the real local API and database.
+
+These changes have not been deployed or included in a new TestFlight build. No EAS
+build or submission was started. Real iPhone acceptance remains pending.
 
 ## Completed
 

@@ -328,6 +328,9 @@ def init_db() -> None:
     with get_connection() as conn:
         _create_tables(conn)
 
+        if not _has_column(conn, "trips", "version"):
+            conn.execute("ALTER TABLE trips ADD COLUMN version INTEGER NOT NULL DEFAULT 1")
+
         # Migrate older DBs that didn't have user ownership columns.
         if not _has_column(conn, "trips", "user_id"):
             conn.execute("ALTER TABLE trips ADD COLUMN user_id TEXT NOT NULL DEFAULT ''")

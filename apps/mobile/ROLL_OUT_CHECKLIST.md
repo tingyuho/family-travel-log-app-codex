@@ -38,7 +38,26 @@
 - [ ] The trip name and dates above Save Stop match the intended destination trip.
 - [ ] Trip Details → Quick Stop preselects that trip and returns to details after saving/canceling.
 
+## Map overlap fix (pending device verification; no EAS build requested)
+
+- [ ] Routes/Dots and All/Past/Wishlist controls stay above the map and never cover empty-state text.
+- [ ] Select a past-trip marker, then switch to an empty Wishlist: no past-trip details remain visible.
+- [ ] An empty filter shows the matching message; trips without route stops show guidance for adding a place.
+- [ ] On populated maps, switch Routes/Dots, tap markers, expand/collapse details, and open Trip Details.
+- [ ] Repeat on a narrow iPhone, with larger text and long trip titles; controls wrap and empty guidance remains scrollable.
+
 ## Real Device Smoke Checklist
+
+Shared UI priorities 1 and 2 (local source, not yet in TestFlight):
+
+- [ ] Trips, Map, and Family have visible navigation labels; Log Out is in the account area.
+- [ ] A card opens details; Select enables comparison and Done exits it.
+- [ ] Switching tabs preserves the current screen, scroll position, filters, and drafts.
+- [ ] Switching Past/Wishlist preserves dates, and undated trips still save.
+- [ ] Name-only creation opens the newly saved trip details.
+- [ ] Add Stop from the library asks for a destination; from details it uses that trip.
+- [ ] Search, choose a place, save once, see confirmation, and verify the stop after refresh.
+- [ ] Check larger text, narrow screens, long titles, keyboard visibility, and unsaved-entry discard prompts.
 
 For the automated login/navigation/logout flow, use a dedicated test account:
 
@@ -70,3 +89,19 @@ before signing in as the test account. Run the remaining checks below manually.
 - [ ] Critical flows pass: login, trip create/edit, people reorder, packing checklist, calendar actions.
 - [ ] Feature flags set for staged rollout strategy.
 - [ ] Protected App Store submission is explicitly approved.
+
+## Reliability update acceptance
+
+- Check an item, force-close the app, reopen it, and confirm the check remains
+  after the packing templates load. Repeat across logout/login with two accounts.
+- Save a trip and a Quick Stop while an unrelated refresh endpoint is unavailable;
+  the saved response should appear once with a success confirmation.
+- Edit the same trip on web and iPhone. Save one device, then save the stale edit
+  on the other. The second save must retain the draft and offer Review latest.
+- Review the latest trip, keep the unfinished edit, and confirm that replacing it
+  requires an explicit choice. Restart while editing and confirm the original
+  version remains attached to the restored draft.
+- Add stops from two devices and confirm both remain without reverting title,
+  notes, people, stays, or existing itinerary entries.
+- Install the matching updated client after the backend rollout; an older client
+  should receive the update-needed response when attempting a full trip edit.

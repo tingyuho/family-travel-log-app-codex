@@ -36,6 +36,7 @@ export function useWebMapSelection({ activeTab, displayedTrips }) {
   }, [displayedTrips]);
 
   const toggleTripSelection = (tripId, shouldFocus = true) => {
+    setMapDetail(null);
     setSelectedTripIds((prev) => {
       const alreadySelected = prev.includes(tripId);
       const next = alreadySelected

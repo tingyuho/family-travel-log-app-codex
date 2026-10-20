@@ -27,15 +27,16 @@ export function useTripWorkflow({
   const [routeSuggestions, setRouteSuggestions] = useState<PlaceSuggestion[]>([]);
   const [routeSearching, setRouteSearching] = useState(false);
   const routeDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const didHydrateDraftRef = useRef(false);
+  const [hydratedUser, setHydratedUser] = useState<string | undefined>();
 
   useEffect(() => {
     setTripFormValidation(validateTripDraft(tripDraft));
   }, [tripDraft]);
 
   useEffect(() => {
-    didHydrateDraftRef.current = false;
-    if (!userId) return;
+    setTripDraft(emptyTripDraft);
+    setTripEditingId(null);
+    if (!userId) { setHydratedUser(undefined); return; }
     try {
       const saved = Storage.getItemSync(getDraftStorageKey(userId));
       if (saved) {
@@ -48,12 +49,12 @@ export function useTripWorkflow({
     } catch {
       // Draft auto-resume is a convenience; the normal editor remains usable if storage fails.
     } finally {
-      didHydrateDraftRef.current = true;
+      setHydratedUser(userId);
     }
   }, [userId]);
 
   useEffect(() => {
-    if (!userId || !didHydrateDraftRef.current) return;
+    if (!userId || hydratedUser !== userId) return;
     const key = getDraftStorageKey(userId);
     try {
       if (tripEditingId || hasTripDraftContent(tripDraft)) {
@@ -64,7 +65,7 @@ export function useTripWorkflow({
     } catch {
       // Keep typing responsive even if local persistence is unavailable.
     }
-  }, [userId, tripEditingId, tripDraft]);
+  }, [userId, hydratedUser, tripEditingId, tripDraft]);
 
   useEffect(() => {
     if (routeDebounceRef.current) clearTimeout(routeDebounceRef.current);
@@ -163,6 +164,7 @@ function getDraftStorageKey(userId: string) {
 
 function toTripDraft(trip: Trip): TripDraftShape {
   return {
+    version: trip.version,
     title: trip.title,
     trip_kind: trip.trip_kind,
     start_date: trip.start_date || "",

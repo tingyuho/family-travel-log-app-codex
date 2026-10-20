@@ -1,3 +1,6 @@
+import AuthPortal from "./components/AuthPortal";
+import PlannerIcon from "./components/PlannerIcon";
+import PlannerTripView from "./components/PlannerTripView";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleMarker,
@@ -6,9 +9,10 @@ import {
   Polyline,
   Popup,
   TileLayer,
-  useMap,
 } from "react-leaflet";
-import L from "leaflet";
+import { getTripMarkerIcon, getTripLineColor, getTripLineWeight, getOrderedRoutePoints, getRouteArrowSegments, createRouteArrowIcon, MapFocus, splitPlaceName, formatSuggestionLocation, MapSearchResultsLayer, ClusteredTripMarkers, TripHeatmapLayer } from "./components/TripMapLayers";
+import { AccommodationRepeater, ItineraryRepeater } from "./components/TripPlanFields";
+import TripItineraryTimeline from "./components/TripItineraryTimeline";
 import {
   clearAuthState,
   createPackingTemplate,
@@ -18,6 +22,8 @@ import {
   deletePeopleProfile,
   deleteTrip,
   fetchMe,
+  fetchTrip,
+  ApiError,
   fetchPackingTemplates,
   fetchPeopleProfiles,
   fetchTrips,
@@ -34,8 +40,11 @@ import {
   updateMyProfile,
   updateTrip,
 } from "./api";
+import { buildWebTripPayload } from "./lib/tripWorkflow";
+import { AddStopDialog, TripDetailsDialog, TripDialog } from "./components/TripDialogs";
 import { useWebCalendarActions } from "./hooks/useWebCalendarActions";
 import { useWebMapSelection } from "./hooks/useWebMapSelection";
+import { useWebTripDrafts } from "./hooks/useWebTripDrafts";
 import { useWebTripFilters } from "./hooks/useWebTripFilters";
 import {
   appendRouteStopText,
@@ -64,32 +73,9 @@ import {
   buildTripIcsText,
 } from "./lib/calendarUtils";
 import "leaflet/dist/leaflet.css";
-import "leaflet.markercluster";
 import "leaflet.markercluster/dist/MarkerCluster.css";
 import "leaflet.markercluster/dist/MarkerCluster.Default.css";
-import "leaflet.heat";
 import "./styles.css";
-
-const pinIcon = new L.Icon({
-  iconUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
-
-const pastTripIcon = new L.Icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-blue.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
-
-const wishlistTripIcon = new L.Icon({
-  iconUrl: "https://raw.githubusercontent.com/pointhi/leaflet-color-markers/master/img/marker-icon-green.png",
-  shadowUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-shadow.png",
-  iconSize: [25, 41],
-  iconAnchor: [12, 41],
-});
 
 function friendlyErrorMessage(error, context = "default") {
   const message = error instanceof Error ? error.message : String(error || "Something went wrong.");
@@ -273,291 +259,6 @@ function isValidEmail(value) {
   return /^[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}$/.test((value || "").trim());
 }
 
-function getTripMarkerIcon(tripKind) {
-  return normalizeTripKind(tripKind) === "wishlist" ? wishlistTripIcon : pastTripIcon;
-}
-
-function getTripLineColor(tripKind, highlighted) {
-  if (normalizeTripKind(tripKind) === "wishlist") {
-    return highlighted ? "#5f6b76" : "#9aa7b3";
-  }
-  return highlighted ? "#e55f2b" : "#3388ff";
-}
-
-function getTripLineWeight(highlighted) {
-  return highlighted ? 4 : 2;
-}
-
-function getOrderedRoutePoints(route) {
-  return [...(route || [])].sort((a, b) => (a.order ?? 0) - (b.order ?? 0));
-}
-
-function getRouteArrowSegments(route) {
-  const points = getOrderedRoutePoints(route);
-  const segments = [];
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const start = points[index];
-    const end = points[index + 1];
-    const midLat = (start.lat + end.lat) / 2;
-    const midLng = (start.lng + end.lng) / 2;
-    const lngScale = Math.cos((midLat * Math.PI) / 180);
-    const dx = (end.lng - start.lng) * lngScale;
-    const dy = end.lat - start.lat;
-    if (!Number.isFinite(dx) || !Number.isFinite(dy) || (dx === 0 && dy === 0)) continue;
-    segments.push({
-      position: [midLat, midLng],
-      angle: (Math.atan2(dx, dy) * 180) / Math.PI,
-      order: start.order ?? index,
-    });
-  }
-  return segments;
-}
-
-function createRouteArrowIcon(color, angle, highlighted) {
-  return L.divIcon({
-    className: "route-arrow-icon",
-    html: `<span class="route-arrow${highlighted ? " is-highlighted" : ""}" style="--route-arrow-color: ${color}; transform: rotate(${angle}deg);"></span>`,
-    iconSize: [22, 22],
-    iconAnchor: [11, 11],
-  });
-}
-
-function normalizeLng(lng) {
-  return ((((lng + 180) % 360) + 360) % 360) - 180;
-}
-
-function buildFocusBounds(points) {
-  const latLngs = points.map(([lat, lng]) => L.latLng(lat, lng));
-  if (!latLngs.length) return null;
-
-  let bounds = L.latLngBounds(latLngs);
-  const directSpan = bounds.getEast() - bounds.getWest();
-
-  // If selected points straddle the date line, shift negative longitudes to reduce span.
-  if (directSpan > 180) {
-    const shifted = latLngs.map((point) =>
-      L.latLng(point.lat, point.lng < 0 ? point.lng + 360 : point.lng)
-    );
-    const shiftedBounds = L.latLngBounds(shifted);
-    const sw = shiftedBounds.getSouthWest();
-    const ne = shiftedBounds.getNorthEast();
-    bounds = L.latLngBounds(
-      [sw.lat, normalizeLng(sw.lng)],
-      [ne.lat, normalizeLng(ne.lng)]
-    );
-  }
-
-  return bounds.pad(0.14);
-}
-
-function MapFocus({ selectedTrips }) {
-  const map = useMap();
-  useEffect(() => {
-    if (!selectedTrips?.length) return;
-    const points = selectedTrips
-      .flatMap((trip) => trip.route || [])
-      .map((point) => [point.lat, point.lng]);
-    if (!points.length) return;
-    if (points.length === 1) {
-      map.setView(points[0], Math.max(map.getZoom(), 7), { animate: true });
-      return;
-    }
-    const bounds = buildFocusBounds(points);
-    if (!bounds || !bounds.isValid()) return;
-    map.fitBounds(bounds, {
-      padding: [42, 42],
-      maxZoom: 8,
-      animate: true,
-    });
-  }, [map, selectedTrips]);
-  return null;
-}
-
-
-function createSearchResultIcon(label) {
-  const shortLabel = (label || "Place").split(",")[0].slice(0, 34);
-  const safeLabel = shortLabel
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;");
-  return L.divIcon({
-    className: "map-search-result-icon",
-    html: `<span>${safeLabel}</span>`,
-    iconSize: [120, 30],
-    iconAnchor: [60, 15],
-  });
-}
-
-function getSearchResultPosition(result) {
-  const lat = Number(result.lat);
-  const lng = Number(result.lon);
-  if (!Number.isFinite(lat) || !Number.isFinite(lng)) return null;
-  return [lat, lng];
-}
-
-function splitPlaceName(displayName) {
-  const parts = (displayName || "").split(",").map((part) => part.trim()).filter(Boolean);
-  return {
-    primary: parts[0] || "Place",
-    secondary: parts.slice(1, 4).join(", "),
-  };
-}
-
-function formatSuggestionLocation(result) {
-  const address = result.address || {};
-  const city = address.city || address.town || address.village || address.hamlet || address.county;
-  const region = address.state || address.province || address.region;
-  const country = address.country;
-  const parts = [city, region, country].filter(Boolean);
-  if (parts.length) return parts.join(", ");
-  return splitPlaceName(result.display_name).secondary;
-}
-
-function MapSearchResultsLayer({ results, targetLabel, onAddResult }) {
-  const map = useMap();
-  const validResults = useMemo(
-    () => (results || [])
-      .map((result) => ({ result, position: getSearchResultPosition(result) }))
-      .filter((item) => item.position),
-    [results]
-  );
-
-  useEffect(() => {
-    if (!validResults.length) return;
-    if (validResults.length === 1) {
-      map.setView(validResults[0].position, Math.max(map.getZoom(), 10), { animate: true });
-      return;
-    }
-    const bounds = L.latLngBounds(validResults.map((item) => item.position));
-    if (bounds.isValid()) {
-      map.fitBounds(bounds.pad(0.22), { padding: [42, 42], maxZoom: 10, animate: true });
-    }
-  }, [map, validResults]);
-
-  return (
-    <>
-      {validResults.map(({ result, position }) => (
-        <Marker
-          key={`search-result-${result.place_id || `${position[0]}-${position[1]}`}`}
-          position={position}
-          icon={createSearchResultIcon(result.display_name)}
-          zIndexOffset={700}
-        >
-          <Popup>
-            <div className="map-search-popup">
-              <strong>{(result.display_name || "Place").split(",")[0]}</strong>
-              <p>{result.display_name}</p>
-              <button type="button" onClick={() => onAddResult(result)}>
-                Add to {targetLabel} route
-              </button>
-            </div>
-          </Popup>
-        </Marker>
-      ))}
-    </>
-  );
-}
-function ClusteredTripMarkers({
-  trips,
-  selectedTripIdsSet,
-  hasExplicitSelection,
-  onToggleTripSelection,
-  onShowTripDetail,
-}) {
-  const map = useMap();
-
-  useEffect(() => {
-    const globalLeaflet = typeof window !== "undefined" ? window.L : null;
-    const clusterFactory = L.markerClusterGroup || globalLeaflet?.markerClusterGroup;
-    if (typeof clusterFactory !== "function") return undefined;
-
-    const clusterGroup = clusterFactory({
-      chunkedLoading: true,
-      disableClusteringAtZoom: 10,
-      spiderfyOnMaxZoom: true,
-      showCoverageOnHover: false,
-    });
-
-    trips.forEach((trip) => {
-      const isSelected = selectedTripIdsSet.has(trip.id);
-      const shouldHighlight = !hasExplicitSelection || isSelected;
-      (trip.route || []).forEach((point, idx) => {
-        const marker = L.marker([point.lat, point.lng], {
-          icon: getTripMarkerIcon(trip.trip_kind),
-          opacity: shouldHighlight ? 1 : 0.55,
-        });
-        marker.on("click", () => {
-          onToggleTripSelection(trip.id);
-          onShowTripDetail(trip, point.label || `Stop ${idx + 1}`, [point.lat, point.lng]);
-        });
-        clusterGroup.addLayer(marker);
-      });
-    });
-
-    map.addLayer(clusterGroup);
-    return () => {
-      map.removeLayer(clusterGroup);
-    };
-  }, [map, trips, selectedTripIdsSet, hasExplicitSelection, onToggleTripSelection, onShowTripDetail]);
-
-  return null;
-}
-
-function TripHeatmapLayer({ trips }) {
-  const map = useMap();
-
-  useEffect(() => {
-    const globalLeaflet = typeof window !== "undefined" ? window.L : null;
-    const heatFactory = L.heatLayer || globalLeaflet?.heatLayer;
-    if (typeof heatFactory !== "function") return undefined;
-
-    const bucketedPoints = new Map();
-    trips.forEach((trip) => {
-      (trip.route || []).forEach((point) => {
-        const key = `${point.lat.toFixed(2)}|${point.lng.toFixed(2)}`;
-        const existing = bucketedPoints.get(key);
-        if (existing) {
-          existing.count += 1;
-          return;
-        }
-        bucketedPoints.set(key, { lat: point.lat, lng: point.lng, count: 1 });
-      });
-    });
-
-    const pointList = [...bucketedPoints.values()];
-    if (!pointList.length) return undefined;
-
-    const maxCount = Math.max(...pointList.map((point) => point.count));
-    const heatPoints = pointList.map((point) => [
-      point.lat,
-      point.lng,
-      Math.max(0.25, point.count / Math.max(1, maxCount)),
-    ]);
-
-    const heatLayer = heatFactory(heatPoints, {
-      radius: 28,
-      blur: 24,
-      minOpacity: 0.3,
-      maxZoom: 7,
-      gradient: {
-        0.2: "#4cc9f0",
-        0.4: "#3a86ff",
-        0.6: "#ffbe0b",
-        0.8: "#fb5607",
-        1: "#d00000",
-      },
-    });
-
-    map.addLayer(heatLayer);
-    return () => {
-      map.removeLayer(heatLayer);
-    };
-  }, [map, trips]);
-
-  return null;
-}
-
 function RouteBuilderPanel({
   routeText,
   onRouteTextChange,
@@ -659,10 +360,10 @@ function TripPopupContent({ trip, stopLabel }) {
   return (
     <div className="trip-popup">
       <h4>{trip.title}</h4>
-      <p><strong>Type:</strong> {getTripKindLabel(trip.trip_kind)}</p>
+      <p><strong>{getTripKindLabel(trip.trip_kind)}</strong></p>
       {stopLabel ? <p><strong>Stop:</strong> {stopLabel}</p> : null}
       <p>
-        <strong>Dates:</strong> {trip.start_date || "Unknown start"} - {trip.end_date || "Unknown end"}
+        <strong>Dates:</strong> {trip.start_date || "Dates not set"}{trip.end_date ? ` – ${trip.end_date}` : ""}
       </p>
       {trip.notes ? <p>{trip.notes}</p> : null}
       {trip.people?.length ? <p><strong>People:</strong> {trip.people.join(", ")}</p> : null}
@@ -682,271 +383,6 @@ function TripPopupContent({ trip, stopLabel }) {
           </ul>
         </div>
       ) : null}
-    </div>
-  );
-}
-
-function AccommodationRepeater({ accommodations, onChange }) {
-  const rows = Array.isArray(accommodations) && accommodations.length
-    ? accommodations
-    : [createEmptyAccommodation()];
-
-  const updateRow = (index, field, value) => {
-    const next = rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row));
-    onChange(next);
-  };
-
-  const addRow = () => {
-    onChange([...rows, createEmptyAccommodation()]);
-  };
-
-  const removeRow = (index) => {
-    const next = rows.filter((_, rowIndex) => rowIndex !== index);
-    onChange(next.length ? next : [createEmptyAccommodation()]);
-  };
-
-  return (
-    <div className="accommodation-repeater">
-      {rows.map((row, index) => (
-        <div key={`stay-${index}`} className="accommodation-row">
-          <div className="accommodation-row-header">
-            <strong>Accommodation {index + 1}</strong>
-            <button type="button" className="ghost-btn" onClick={() => removeRow(index)}>
-              Remove
-            </button>
-          </div>
-          <div className="accommodation-grid">
-            <label>
-              Name
-              <input
-                value={row.name}
-                onChange={(event) => updateRow(index, "name", event.target.value)}
-                placeholder="Hotel, rental, lodge..."
-              />
-            </label>
-            <label>
-              Location
-              <input
-                value={row.location}
-                onChange={(event) => updateRow(index, "location", event.target.value)}
-                placeholder="Seattle, WA"
-              />
-            </label>
-            <label>
-              Check-in
-              <input
-                type="date"
-                value={row.check_in}
-                onChange={(event) => updateRow(index, "check_in", event.target.value)}
-              />
-            </label>
-            <label>
-              Check-out
-              <input
-                type="date"
-                value={row.check_out}
-                onChange={(event) => updateRow(index, "check_out", event.target.value)}
-              />
-            </label>
-            <label className="accommodation-notes">
-              Notes
-              <textarea
-                rows={2}
-                value={row.notes}
-                onChange={(event) => updateRow(index, "notes", event.target.value)}
-                placeholder="Near the beach, parking included..."
-              />
-            </label>
-          </div>
-        </div>
-      ))}
-      <button type="button" className="ghost-btn accommodation-add-btn" onClick={addRow}>
-        + Add another stay
-      </button>
-    </div>
-  );
-}
-
-function ItineraryRepeater({ itinerary, onChange }) {
-  const rows = Array.isArray(itinerary) && itinerary.length ? itinerary : [createEmptyItineraryEvent()];
-
-  const updateRow = (index, field, value) => {
-    const next = rows.map((row, rowIndex) => (rowIndex === index ? { ...row, [field]: value } : row));
-    onChange(next);
-  };
-
-  const addRow = () => {
-    onChange([...rows, createEmptyItineraryEvent()]);
-  };
-
-  const removeRow = (index) => {
-    const next = rows.filter((_, rowIndex) => rowIndex !== index);
-    onChange(next.length ? next : [createEmptyItineraryEvent()]);
-  };
-
-  return (
-    <div className="itinerary-repeater">
-      {rows.map((row, index) => (
-        <div key={`itinerary-${index}`} className="itinerary-row">
-          <div className="itinerary-row-header">
-            <strong>Item {index + 1}</strong>
-            <button type="button" className="ghost-btn" onClick={() => removeRow(index)}>
-              Remove
-            </button>
-          </div>
-          <div className="itinerary-grid">
-            <label>
-              Date
-              <input
-                type="date"
-                value={row.date}
-                onChange={(event) => updateRow(index, "date", event.target.value)}
-              />
-            </label>
-            <label>
-              Time
-              <input
-                type="time"
-                value={row.time}
-                onChange={(event) => updateRow(index, "time", event.target.value)}
-              />
-            </label>
-            <label>
-              Activity
-              <input
-                value={row.activity}
-                onChange={(event) => updateRow(index, "activity", event.target.value)}
-                placeholder="Museum visit, beach time, check-in"
-              />
-            </label>
-            <label>
-              Location
-              <input
-                value={row.location}
-                onChange={(event) => updateRow(index, "location", event.target.value)}
-                placeholder="Location"
-              />
-            </label>
-            <label className="itinerary-notes">
-              Notes
-              <textarea
-                rows={2}
-                value={row.notes}
-                onChange={(event) => updateRow(index, "notes", event.target.value)}
-                placeholder="Tickets booked, meeting point, reminders"
-              />
-            </label>
-          </div>
-        </div>
-      ))}
-      <button type="button" className="ghost-btn itinerary-add-btn" onClick={addRow}>
-        + Add itinerary item
-      </button>
-      <p className="helper-text">Only items with both date and activity are saved.</p>
-    </div>
-  );
-}
-
-function formatTimelineDate(dateText) {
-  if (!dateText) return "General";
-  const parsed = new Date(`${dateText}T00:00:00`);
-  if (Number.isNaN(parsed.getTime())) return dateText;
-  return parsed.toLocaleDateString(undefined, {
-    weekday: "short",
-    month: "short",
-    day: "numeric",
-  });
-}
-
-function buildTripTimelineDays(trip) {
-  const buckets = new Map();
-
-  const pushItem = (date, item) => {
-    const key = date || "general";
-    if (!buckets.has(key)) buckets.set(key, []);
-    buckets.get(key).push(item);
-  };
-
-  (trip.itinerary || []).forEach((event) => {
-    pushItem(event.date, {
-      type: "activity",
-      time: event.time || "",
-      title: event.activity,
-      location: event.location || "",
-      notes: event.notes || "",
-    });
-  });
-
-  (trip.accommodations || []).forEach((stay) => {
-    if (stay.check_in) {
-      pushItem(stay.check_in, {
-        type: "stay",
-        time: "",
-        title: `Check-in: ${stay.name}`,
-        location: stay.location || "",
-        notes: stay.notes || "",
-      });
-    }
-    if (stay.check_out) {
-      pushItem(stay.check_out, {
-        type: "stay",
-        time: "",
-        title: `Check-out: ${stay.name}`,
-        location: stay.location || "",
-        notes: stay.notes || "",
-      });
-    }
-  });
-
-  if (trip.notes?.trim()) {
-    pushItem(trip.start_date || "", {
-      type: "note",
-      time: "",
-      title: "Trip Notes",
-      location: "",
-      notes: trip.notes.trim(),
-    });
-  }
-
-  return [...buckets.entries()]
-    .sort(([a], [b]) => {
-      if (a === "general") return 1;
-      if (b === "general") return -1;
-      return a.localeCompare(b);
-    })
-    .map(([date, items]) => ({
-      date,
-      label: formatTimelineDate(date === "general" ? "" : date),
-      items: [...items].sort((a, b) => (a.time || "99:99").localeCompare(b.time || "99:99")),
-    }));
-}
-
-function TripItineraryTimeline({ trip }) {
-  const days = buildTripTimelineDays(trip);
-  if (!days.length) {
-    return <p className="helper-text">No itinerary items yet.</p>;
-  }
-
-  return (
-    <div className="itinerary-timeline">
-      {days.map((day) => (
-        <section key={`${trip.id}-${day.date || "general"}`} className="itinerary-day-card">
-          <h4>{day.label}</h4>
-          <ul>
-            {day.items.map((item, idx) => (
-              <li key={`${trip.id}-${day.date}-${idx}`}>
-                <div className="itinerary-item-head">
-                  <span className={`itinerary-badge itinerary-${item.type}`}>{item.type}</span>
-                  <strong>{item.title}</strong>
-                  {item.time ? <time>{item.time}</time> : null}
-                </div>
-                {item.location ? <p className="itinerary-location">{item.location}</p> : null}
-                {item.notes ? <p className="itinerary-notes-text">{item.notes}</p> : null}
-              </li>
-            ))}
-          </ul>
-        </section>
-      ))}
     </div>
   );
 }
@@ -1049,6 +485,8 @@ function WeatherPreview({ trip }) {
 export default function App() {
   const [trips, setTrips] = useState([]);
   const [peopleProfiles, setPeopleProfiles] = useState([]);
+  const [peopleLoaded, setPeopleLoaded] = useState(false);
+  const [tripConflictId, setTripConflictId] = useState(null);
   const [packingTemplates, setPackingTemplates] = useState([]);
   const [authReady, setAuthReady] = useState(false);
   const [currentUserId, setCurrentUserId] = useState("");
@@ -1085,6 +523,54 @@ export default function App() {
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
   const [activeTab, setActiveTab] = useState("trips");
+  const [showCreateTrip, setShowCreateTrip] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [listMode, setListMode] = useState("list");
+  const [detailTripId, setDetailTripId] = useState(null);
+  const [addStopTarget, setAddStopTarget] = useState(null);
+  const [workflowNotice, setWorkflowNotice] = useState(null);
+  const [tripSaving, setTripSaving] = useState(false);
+  const tripSaveLock = useRef(false);
+  const mapReturnRef = useRef(null);
+  const navigationScroll = useRef({});
+  const detailReturnScroll = useRef(0);
+  const previousTab = useRef("trips");
+  const detailTrip = trips.find((trip) => trip.id === detailTripId);
+
+  useEffect(() => {
+    const oldTab = previousTab.current;
+    if (oldTab === activeTab) return;
+    previousTab.current = activeTab;
+    requestAnimationFrame(() => window.scrollTo(0, navigationScroll.current[activeTab] || 0));
+  }, [activeTab]);
+
+  function navigateTab(nextTab) {
+    navigationScroll.current[activeTab] = window.scrollY;
+    setActiveTab(nextTab);
+  }
+
+  function openDetails(trip) {
+    detailReturnScroll.current = window.scrollY;
+    setDetailTripId(trip.id);
+  }
+  function closeDetails() {
+    setDetailTripId(null);
+    requestAnimationFrame(() => window.scrollTo(0, detailReturnScroll.current));
+  }
+  function openTripMap(trip) {
+    mapReturnRef.current = { tripId: trip.id, detail: detailTripId === trip.id };
+    setDetailTripId(null);
+    setSelectedTripIds([trip.id]);
+    showTripDetail(trip);
+    navigateTab("map");
+  }
+  function returnFromMap() {
+    const origin = mapReturnRef.current;
+    navigateTab("trips");
+    if (origin?.detail) setDetailTripId(origin.tripId);
+    mapReturnRef.current = null;
+  }
+
   const [routeQuery, setRouteQuery] = useState("");
   const [routeResults, setRouteResults] = useState([]);
   const [routeSuggestions, setRouteSuggestions] = useState([]);
@@ -1099,6 +585,15 @@ export default function App() {
   const [activePackingTemplateId, setActivePackingTemplateId] = useState(null);
   const [checkedPackingItems, setCheckedPackingItems] = useState({});
   const packingChecksHydratedRef = useRef(false);
+  const drafts = useWebTripDrafts({ user: authReady ? currentUserId : "", form, tripEdit, showCreateTrip, setForm, setTripEdit, setShowCreateTrip, peopleProfiles });
+
+  async function reviewLatestTrip() {
+    try {
+      const latest = await fetchTrip(tripConflictId);
+      setTrips((current) => current.map((trip) => trip.id === latest.id ? latest : trip));
+      openDetails(latest);
+    } catch (error) { setError(error.message || "Could not load the latest trip. Your draft is kept."); }
+  }
 
   const {
     query,
@@ -1161,15 +656,15 @@ export default function App() {
 
   useEffect(() => {
     if (!["trips", "map", "hub"].includes(activeTab)) {
-      setActiveTab("trips");
+      navigateTab("trips");
     }
   }, [activeTab]);
 
-  const loadTrips = async (searchText = "") => {
+  const loadTrips = async () => {
     setLoading(true);
     setError("");
     try {
-      const data = await fetchTrips(searchText);
+      const data = await fetchTrips();
       setTrips(
         data.map((trip) => ({
           ...trip,
@@ -1187,6 +682,7 @@ export default function App() {
     try {
       const data = await fetchPeopleProfiles();
       setPeopleProfiles(data);
+      setPeopleLoaded(true);
     } catch (err) {
       setError(err.message || "Failed to load people profiles");
     }
@@ -1250,25 +746,28 @@ export default function App() {
   }, [authReady, checkedPackingItems, currentUserId]);
 
   useEffect(() => {
+    if (!peopleLoaded) return;
     const validIds = new Set(peopleProfiles.map((person) => person.id));
-    setForm((prev) => ({
-      ...prev,
-      selected_person_ids: prev.selected_person_ids.filter((id) => validIds.has(id)),
-    }));
-    setTripEdit((prev) => {
-      if (!prev) return prev;
-      return {
-        ...prev,
-        selected_person_ids: prev.selected_person_ids.filter((id) => validIds.has(id)),
-      };
-    });
-  }, [peopleProfiles]);
+    const preservePeople = (draft) => {
+      if (!draft) return draft;
+      const missing = draft.selected_person_ids.filter((id) => !validIds.has(id));
+      if (!missing.length) return draft;
+      const names = missing.map((id) => draft.person_names_by_id?.[id]).filter(Boolean);
+      return { ...draft, selected_person_ids: draft.selected_person_ids.filter((id) => validIds.has(id)),
+        unmatched_people: [...new Set([...(draft.unmatched_people || []), ...names])] };
+    };
+    setForm(preservePeople);
+    setTripEdit(preservePeople);
+  }, [peopleProfiles, peopleLoaded]);
 
+  useEffect(() => {
+    if (tripEdit) requestAnimationFrame(() => document.getElementById("trip-edit-form")?.scrollIntoView({ block: "start" }));
+  }, [tripEdit?.id]);
+
+  const visibleMapTrips = selectedTrips.length ? selectedTrips : displayedTrips;
   const mapCenter = useMemo(() => tripToMapCenter(filteredTrips), [filteredTrips]);
-  const createDateRangeInvalid = normalizeTripKind(form.trip_kind) !== "wishlist"
-    && isInvalidDateRange(form.start_date, form.end_date);
-  const editDateRangeInvalid = normalizeTripKind(tripEdit?.trip_kind) !== "wishlist"
-    && isInvalidDateRange(tripEdit?.start_date, tripEdit?.end_date);
+  const createDateRangeInvalid = isInvalidDateRange(form.start_date, form.end_date);
+  const editDateRangeInvalid = isInvalidDateRange(tripEdit?.start_date, tripEdit?.end_date);
 
   useEffect(() => {
     const validIds = new Set(displayedTrips.map((trip) => trip.id));
@@ -1312,9 +811,6 @@ export default function App() {
   const onFormChange = (field) => (event) => {
     const value = event.target.value;
     setForm((prev) => {
-      if (field === "trip_kind" && normalizeTripKind(value) === "wishlist") {
-        return { ...prev, trip_kind: "wishlist", start_date: "", end_date: "" };
-      }
       return { ...prev, [field]: value };
     });
   };
@@ -1325,7 +821,7 @@ export default function App() {
       const next = event.target.checked
         ? [...current, personId]
         : current.filter((id) => id !== personId);
-      return { ...prev, selected_person_ids: next };
+      return { ...prev, selected_person_ids: next, person_names_by_id: { ...(prev.person_names_by_id || {}), ...Object.fromEntries(peopleProfiles.map((person) => [person.id, person.name])) } };
     });
   };
 
@@ -1336,27 +832,22 @@ export default function App() {
       setError("End date cannot be before start date.");
       return;
     }
+    if (tripSaveLock.current) return;
+    tripSaveLock.current = true;
+    setTripSaving(true);
     try {
-      const peopleMap = new Map(peopleProfiles.map((person) => [person.id, person.name]));
-      const tripKind = normalizeTripKind(form.trip_kind);
-      const payload = {
-        title: form.title.trim(),
-        trip_kind: tripKind,
-        start_date: tripKind === "wishlist" ? null : form.start_date || null,
-        end_date: tripKind === "wishlist" ? null : form.end_date || null,
-        notes: form.notes,
-        people: form.selected_person_ids.map((id) => peopleMap.get(id)).filter(Boolean),
-        route: parseRoute(form.route_text),
-        accommodations: cleanAccommodationRows(form.accommodations),
-        itinerary: cleanItineraryRows(form.itinerary),
-      };
-      await createTrip(payload);
+      const payload = buildWebTripPayload(form, peopleProfiles);
+      const saved = await createTrip(payload);
+      setTrips((prev) => [saved, ...prev.filter((trip) => trip.id !== saved.id)]);
+      setShowCreateTrip(false);
+      setWorkflowNotice({ message: `Trip created: ${saved.title}`, tripId: saved.id });
+      openDetails(saved);
+      drafts.clear();
       setForm(createEmptyForm());
       setRouteSearchTarget("create");
-      await loadTrips(query);
     } catch (err) {
       setError(err.message || "Could not save trip");
-    }
+    } finally { tripSaveLock.current = false; setTripSaving(false); }
   };
 
   const peopleNamesToIds = (names) => {
@@ -1374,7 +865,13 @@ export default function App() {
   };
 
   const onStartTripEdit = (trip) => {
+    if (tripEdit && !window.confirm("Replace your unfinished edit with this saved trip?")) return;
+    drafts.clear();
+    setError("");
+    setTripConflictId(null);
     setTripEdit({
+      version: trip.version,
+      person_names_by_id: Object.fromEntries(peopleProfiles.map((person) => [person.id, person.name])),
       id: trip.id,
       title: trip.title || "",
       trip_kind: normalizeTripKind(trip.trip_kind),
@@ -1382,6 +879,8 @@ export default function App() {
       end_date: trip.end_date || "",
       notes: trip.notes || "",
       selected_person_ids: peopleNamesToIds(trip.people),
+      unmatched_people: (trip.people || []).filter((name) => !peopleProfiles.some((person) => normalizePersonName(person.name) === normalizePersonName(name))),
+      excluded_people: [],
       route_text: formatRouteText(trip.route),
       accommodations: normalizeAccommodationRows(trip.accommodations),
       itinerary: normalizeItineraryRows(trip.itinerary),
@@ -1392,9 +891,6 @@ export default function App() {
     const value = event.target.value;
     setTripEdit((prev) => {
       if (!prev) return prev;
-      if (field === "trip_kind" && normalizeTripKind(value) === "wishlist") {
-        return { ...prev, trip_kind: "wishlist", start_date: "", end_date: "" };
-      }
       return { ...prev, [field]: value };
     });
   };
@@ -1417,27 +913,26 @@ export default function App() {
       setError("End date cannot be before start date.");
       return;
     }
+    if (tripSaveLock.current) return;
+    tripSaveLock.current = true;
+    setTripSaving(true);
     try {
-      const peopleMap = new Map(peopleProfiles.map((person) => [person.id, person.name]));
-      const tripKind = normalizeTripKind(tripEdit.trip_kind);
-      const payload = {
-        title: tripEdit.title.trim(),
-        trip_kind: tripKind,
-        start_date: tripKind === "wishlist" ? null : tripEdit.start_date || null,
-        end_date: tripKind === "wishlist" ? null : tripEdit.end_date || null,
-        notes: tripEdit.notes,
-        people: tripEdit.selected_person_ids.map((id) => peopleMap.get(id)).filter(Boolean),
-        route: parseRoute(tripEdit.route_text),
-        accommodations: cleanAccommodationRows(tripEdit.accommodations),
-        itinerary: cleanItineraryRows(tripEdit.itinerary),
-      };
-      await updateTrip(tripEdit.id, payload);
+      const payload = buildWebTripPayload(tripEdit, peopleProfiles);
+      const saved = await updateTrip(tripEdit.id, payload);
+      setTrips((prev) => prev.map((trip) => trip.id === saved.id ? saved : trip));
+      setDetailTripId(saved.id);
+      setWorkflowNotice({ message: `Trip updated: ${saved.title}`, tripId: saved.id });
+      drafts.clear();
       setTripEdit(null);
+      setTripConflictId(null);
       setRouteSearchTarget("create");
-      await loadTrips(query);
     } catch (err) {
       setError(err.message || "Could not update trip");
-    }
+      if (err instanceof ApiError && (err.status === 409 || err.status === 428)) {
+        setTripConflictId(tripEdit.id);
+        requestAnimationFrame(() => document.getElementById("trip-edit-form")?.scrollIntoView({ block: "start" }));
+      }
+    } finally { tripSaveLock.current = false; setTripSaving(false); }
   };
 
   const onStartPersonEdit = (person) => {
@@ -1699,6 +1194,7 @@ export default function App() {
 
   const onDelete = async (tripId) => {
     setError("");
+    if (!window.confirm("Delete this trip? This cannot be undone.")) return;
     try {
       await deleteTrip(tripId);
       await loadTrips(query);
@@ -1709,7 +1205,7 @@ export default function App() {
 
   const onSearchSubmit = async (event) => {
     event.preventDefault();
-    await loadTrips(query);
+    // Search is applied locally so clearing it restores the complete library.
   };
 
   const onAuthFormChange = (field) => (event) => {
@@ -1780,7 +1276,7 @@ export default function App() {
     setProfileNotice("");
     setProfileForm({ email: currentUserEmail || "" });
     setIsProfileOpen(true);
-    setActiveTab("hub");
+    navigateTab("hub");
   };
 
   const onSaveProfile = async (event) => {
@@ -1831,6 +1327,7 @@ export default function App() {
   };
 
   const onLogout = async () => {
+    drafts.flush();
     try {
       await logout();
     } catch (_err) {
@@ -1846,6 +1343,10 @@ export default function App() {
     setResetCodeSent(false);
     setTrips([]);
     setPeopleProfiles([]);
+    setPeopleLoaded(false);
+    setTripConflictId(null);
+    setForm(createEmptyForm());
+    setTripEdit(null);
     setPackingTemplates([]);
     setSelectedTripIds([]);
     setCalendarSyncTripId(null);
@@ -1855,184 +1356,62 @@ export default function App() {
   };
 
   if (!authReady) {
-    return (
-      <div className="page">
-        <header className="topbar">
-          <h1>Family Travel Log</h1>
-        </header>
-        {error ? <p className="error">{error}</p> : null}
-        {authNotice ? <p className="helper-text">{authNotice}</p> : null}
-        <main className="auth-wrap">
-          <section className="panel auth-panel">
-            <h2>{authMode === "reset" ? "Reset Password" : authMode === "login" ? "Sign In" : "Create Account"}</h2>
-            {authMode !== "reset" ? (
-              <>
-                <form className="trip-form" onSubmit={onAuthSubmit}>
-                  <label>
-                    User ID
-                    <input value={authForm.user_id} onChange={onAuthFormChange("user_id")} required />
-                  </label>
-                  {authMode === "register" ? (
-                    <label>
-                      Email
-                      <input
-                        type="email"
-                        value={authForm.email}
-                        onChange={onAuthFormChange("email")}
-                        placeholder="you@example.com"
-                        required
-                      />
-                    </label>
-                  ) : null}
-                  <label>
-                    Password
-                    <input
-                      type="password"
-                      value={authForm.password}
-                      onChange={onAuthFormChange("password")}
-                      minLength={8}
-                      required
-                    />
-                  </label>
-                  {authMode === "register" ? (
-                    <label>
-                      Confirm Password
-                      <input
-                        type="password"
-                        value={authForm.confirm_password}
-                        onChange={onAuthFormChange("confirm_password")}
-                        minLength={8}
-                        required
-                      />
-                    </label>
-                  ) : null}
-                  <button type="submit">{authMode === "login" ? "Log In" : "Create Account"}</button>
-                </form>
-                <p className="helper-text">
-                  {authMode === "login" ? "Need a new account?" : "Already have an account?"}{" "}
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => {
-                      setAuthNotice("");
-                      setResetCodeSent(false);
-                      setAuthMode((prev) => (prev === "login" ? "register" : "login"));
-                    }}
-                  >
-                    {authMode === "login" ? "Create one" : "Log in"}
-                  </button>
-                </p>
-                {authMode === "login" ? (
-                  <p className="helper-text">
-                    Forgot your password?{" "}
-                    <button
-                      type="button"
-                      className="link-button"
-                      onClick={() => {
-                        setError("");
-                        setAuthNotice("");
-                        setResetCodeSent(false);
-                        setResetForm({ user_id: "", email_code: "", new_password: "", confirm_password: "", reset_key: "" });
-                        setAuthMode("reset");
-                      }}
-                    >
-                      Reset it
-                    </button>
-                  </p>
-                ) : null}
-              </>
-            ) : (
-              <>
-                <form className="trip-form" onSubmit={onResetPasswordSubmit}>
-                  <label>
-                    User ID
-                    <input value={resetForm.user_id} onChange={onResetFormChange("user_id")} required />
-                  </label>
-                  <div className="action-row">
-                    <button type="button" onClick={onRequestPasswordResetCode}>
-                      Send Verification Code
-                    </button>
-                  </div>
-                  <label>
-                    Email Verification Code
-                    <input
-                      value={resetForm.email_code}
-                      onChange={onResetFormChange("email_code")}
-                      placeholder="6-digit code"
-                      required
-                    />
-                  </label>
-                  {resetCodeSent ? (
-                    <p className="helper-text">
-                      Check your email for the verification code, then enter it below.
-                    </p>
-                  ) : null}
-                  <label>
-                    New Password
-                    <input
-                      type="password"
-                      value={resetForm.new_password}
-                      onChange={onResetFormChange("new_password")}
-                      minLength={8}
-                      required
-                    />
-                  </label>
-                  <label>
-                    Confirm New Password
-                    <input
-                      type="password"
-                      value={resetForm.confirm_password}
-                      onChange={onResetFormChange("confirm_password")}
-                      minLength={8}
-                      required
-                    />
-                  </label>
-                  <button type="submit">Reset Password</button>
-                </form>
-                <p className="helper-text">
-                  Remembered your password?{" "}
-                  <button
-                    type="button"
-                    className="link-button"
-                    onClick={() => {
-                      setError("");
-                      setAuthNotice("");
-                      setResetCodeSent(false);
-                      setAuthMode("login");
-                    }}
-                  >
-                    Back to log in
-                  </button>
-                </p>
-              </>
-            )}
-          </section>
-        </main>
-      </div>
-    );
+    return <AuthPortal {...{ error, authNotice, authMode, authForm, resetForm, resetCodeSent,
+      onAuthSubmit, onAuthFormChange, onResetPasswordSubmit, onResetFormChange, onRequestPasswordResetCode }}
+      onChangeMode={(mode) => {
+        setError(""); setAuthNotice(""); setResetCodeSent(false);
+        if (mode === "reset") setResetForm({ user_id: "", email_code: "", new_password: "", confirm_password: "", reset_key: "" });
+        setAuthMode(mode);
+      }} />;
   }
 
   return (
-    <div className="page">
+    <div className="page app-shell">
+      <aside className="app-sidebar" aria-label="Workspace navigation">
       <header className="topbar">
-        <h1>Family Travel Log</h1>
-        <form onSubmit={onSearchSubmit} className="search-form">
-          <input
-            placeholder="Search notes, people, places..."
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-          />
-          <button type="submit">Search</button>
-        </form>
+        <h1 className="planner-brand"><PlannerIcon name="compass" /><span>Family <br />Travel Log</span></h1>
         <div className="user-box">
           <button type="button" className="user-name-btn" onClick={onOpenProfile} title="Open Family Hub">
             {currentUserId}
           </button>
-          <button type="button" onClick={onLogout}>Log Out</button>
+
         </div>
       </header>
 
-      {isProfileOpen || activeTab === "hub" ? (
+          <nav className="tab-nav" aria-label="Main navigation">
+            <button
+              type="button"
+              aria-current={activeTab === "trips" ? "page" : undefined}
+              className={`tab-btn ${activeTab === "trips" ? "is-active" : ""}`}
+              onClick={() => activeTab === "map" && mapReturnRef.current ? returnFromMap() : navigateTab("trips")}
+            >
+              <PlannerIcon name="trips" />Trips
+            </button>
+            <button
+              type="button"
+              aria-current={activeTab === "map" ? "page" : undefined}
+              className={`tab-btn ${activeTab === "map" ? "is-active" : ""}`}
+              onClick={() => navigateTab("map")}
+            >
+              <PlannerIcon name="map" />Map
+            </button>
+            <button
+              type="button"
+              aria-current={activeTab === "hub" ? "page" : undefined}
+              className={`tab-btn ${activeTab === "hub" ? "is-active" : ""}`}
+              onClick={() => {
+                navigateTab("hub");
+                onOpenProfile();
+              }}
+            >
+              <PlannerIcon name="family" />Family
+            </button>
+          </nav>
+          <p className="sidebar-caption">Your family workspace</p>
+      </aside>
+      <div className="workspace">
+        <header className="workspace-header"><p className="breadcrumb">Family workspace / {activeTab === "trips" ? "Trips" : activeTab === "map" ? "Map" : "Family"}</p><h2>{activeTab === "trips" ? (showCreateTrip ? "Create a trip" : "Your trips") : activeTab === "map" ? "Your travel map" : "Your family"}</h2><p className="helper-text">{activeTab === "trips" ? "Bring your places, people, and plans together." : activeTab === "map" ? "Explore the places in your family's travel plans." : "Travel companions and packing lists, all in one place."}</p></header>
+      {activeTab === "hub" ? (
         <section className="panel profile-panel">
           <div className="profile-panel-header">
             <h2>Family Hub</h2>
@@ -2042,7 +1421,7 @@ export default function App() {
               onClick={() => {
                 setIsProfileOpen(false);
                 setProfileNotice("");
-                if (activeTab === "hub") setActiveTab("trips");
+                if (activeTab === "hub") navigateTab("trips");
               }}
             >
               Close
@@ -2064,6 +1443,7 @@ export default function App() {
               />
             </label>
             <button type="submit">Save Account</button>
+            <button type="button" className="ghost-btn" onClick={onLogout}>Log Out</button>
             {profileNotice ? <p className="helper-text">{profileNotice}</p> : null}
           </form>
           <div className="profile-family-section">
@@ -2148,38 +1528,29 @@ export default function App() {
         </div>
       ) : null}
 
-      <main className="content-grid">
+      {workflowNotice ? <div className="workflow-notice" role="status">{workflowNotice.message}<button type="button" className="ghost-btn" onClick={() => { const trip = trips.find((item) => item.id === workflowNotice.tripId); if (trip) openDetails(trip); }}>View trip</button><button type="button" className="ghost-btn" aria-label="Dismiss confirmation" onClick={() => setWorkflowNotice(null)}>Dismiss</button></div> : null}
+      {detailTrip && !addStopTarget ? <TripDetailsDialog trip={detailTrip} onClose={closeDetails}
+        onAddStop={() => setAddStopTarget({ tripId: detailTrip.id })}
+        onEdit={() => { setDetailTripId(null); onStartTripEdit(detailTrip); navigateTab("trips"); setShowCreateTrip(false); }}
+        onMap={() => openTripMap(detailTrip)}
+        onCalendar={() => onOpenTripInGoogleCalendar(detailTrip)}
+        renderItinerary={(trip) => <TripItineraryTimeline trip={trip} />} /> : null}
+      {addStopTarget ? <AddStopDialog trips={trips} initialTripId={addStopTarget.tripId}
+        onClose={() => setAddStopTarget(null)} onSaved={(saved) => { setTrips((prev) => prev.map((trip) => trip.id === saved.id ? saved : trip)); setAddStopTarget(null); setWorkflowNotice({ message: `Stop added to ${saved.title}.`, tripId: saved.id }); }} /> : null}
+      {drafts.pendingRestore ? <TripDialog title="Restore unfinished trip?" onClose={() => {}} dismissible={false}>
+        <p>Your unfinished trip is saved on this browser. Restore it to continue editing, or discard it to start fresh.</p>
+        <p><strong>{drafts.pendingRestore.tripEdit?.title || drafts.pendingRestore.form.title || "Untitled trip"}</strong></p>
+        <div className="action-row"><button type="button" onClick={() => { drafts.restore(); navigateTab("trips"); }}>Restore draft</button><button type="button" className="ghost-btn" onClick={drafts.discard}>Discard saved draft</button></div>
+      </TripDialog> : null}
+      {drafts.storageError ? <p role="status" className="form-warning">Draft recovery is unavailable in this browser. Keep this page open until you save your trip.</p> : null}
+      <main className={`content-grid ${activeTab === "map" ? "map-layout" : activeTab === "trips" && (showCreateTrip || tripEdit) ? "with-map" : "planner-layout"}`}>
         <section className="panel left-panel">
-          <div className="tab-nav" role="tablist" aria-label="Travel sections">
-            <button
-              type="button"
-              className={`tab-btn ${activeTab === "trips" ? "is-active" : ""}`}
-              onClick={() => setActiveTab("trips")}
-            >
-              Trips
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${activeTab === "map" ? "is-active" : ""}`}
-              onClick={() => setActiveTab("map")}
-            >
-              Map
-            </button>
-            <button
-              type="button"
-              className={`tab-btn ${activeTab === "hub" ? "is-active" : ""}`}
-              onClick={() => {
-                setActiveTab("hub");
-                onOpenProfile();
-              }}
-            >
-              Family Hub
-            </button>
-          </div>
+
 
           <div className="tab-panel">
-            {activeTab === "trips" ? (
-              <>
+            <div hidden={activeTab !== "trips" || !showCreateTrip}>
+                <div className="dialog-header"><h2>New Trip</h2><button type="button" className="ghost-btn" onClick={() => setShowCreateTrip(false)}>Back to trips</button></div>
+                <p className="helper-text">Start with a name. Dates and other details are optional. Your draft stays here when you leave this screen.</p>
                 <form className="trip-form" onSubmit={onSubmit}>
                   <label>
                     Trip Name
@@ -2189,7 +1560,7 @@ export default function App() {
                     Trip Type
                     <select value={form.trip_kind} onChange={onFormChange("trip_kind")}>
                       <option value="past">Past Trip</option>
-                      <option value="wishlist">Wish List (no date yet)</option>
+                      <option value="wishlist">Wishlist</option>
                     </select>
                   </label>
                   <div className="row">
@@ -2201,7 +1572,7 @@ export default function App() {
                         value={form.start_date}
                         onChange={onFormChange("start_date")}
                         max={form.end_date || undefined}
-                        disabled={normalizeTripKind(form.trip_kind) === "wishlist"}
+
                       />
                     </label>
                     <label>
@@ -2212,16 +1583,17 @@ export default function App() {
                         value={form.end_date}
                         onChange={onFormChange("end_date")}
                         min={form.start_date || undefined}
-                        disabled={normalizeTripKind(form.trip_kind) === "wishlist"}
+
                       />
                     </label>
                   </div>
                   {normalizeTripKind(form.trip_kind) === "wishlist" ? (
-                    <p className="helper-text">Wish list trips keep dates empty until you finalize plans.</p>
+                    <p className="helper-text">Dates are optional. Changing trip type keeps the dates you entered.</p>
                   ) : null}
                   {createDateRangeInvalid ? (
                     <p className="form-warning">End date cannot be earlier than start date.</p>
                   ) : null}
+                  <details><summary>Add people, places, stays, and itinerary (optional)</summary>
                   <fieldset className="members-fieldset">
                     <legend>Family Members</legend>
                     {!peopleProfiles.length ? <p className="helper-text">Add a profile in Family Hub to start selecting members.</p> : null}
@@ -2240,6 +1612,7 @@ export default function App() {
                         </label>
                       ))}
                     </div>
+                    {(form.unmatched_people || []).map((name) => <label key={name} className="member-item"><input type="checkbox" checked={!(form.excluded_people || []).includes(name)} onChange={(event) => { const checked = event.target.checked; setForm((prev) => ({ ...prev, excluded_people: checked ? (prev.excluded_people || []).filter((entry) => entry !== name) : [...(prev.excluded_people || []), name] })); }} /><span>{name} (saved in this draft)</span></label>)}
                   </fieldset>
                   <label>
                     Notes
@@ -2293,13 +1666,33 @@ export default function App() {
                       }
                     />
                   </div>
-                  <button type="submit" disabled={createDateRangeInvalid}>Save Trip</button>
+                  </details>
+                  <button type="button" className="ghost-btn" disabled={tripSaving} onClick={() => { if (window.confirm("Discard this unfinished trip?")) { drafts.clear(); setForm(createEmptyForm()); setShowCreateTrip(false); } }}>Discard draft</button>
+                  <button type="submit" disabled={createDateRangeInvalid || tripSaving}>{tripSaving ? "Saving…" : "Create Trip"}</button>
                 </form>
-              </>
-            ) : null}
+            </div>
 
-            {activeTab === "trips" ? (
-              <>
+            <div hidden={activeTab !== "trips" || showCreateTrip}>
+                {!tripEdit && !loading && displayedTrips[0] ? <PlannerTripView key={displayedTrips[0].id} trip={displayedTrips[0]} onOpen={() => openDetails(displayedTrips[0])} onAddStop={() => setAddStopTarget({ tripId: displayedTrips[0].id })} /> : null}
+                <div className="library-header"><h2>Trips</h2><div className="action-row">
+                  <button type="button" onClick={() => setShowCreateTrip(true)}>Add Trip</button>
+                  <button type="button" className="ghost-btn" onClick={() => setAddStopTarget({ tripId: null })}>Add Stop</button>
+                </div></div>
+        <form onSubmit={onSearchSubmit} className="search-form">
+          <input
+            aria-label="Search trips" placeholder="Search trips, people, or places"
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+          <button type="submit">Search</button>
+        </form>
+
+                <div className="library-toolbar" role="group" aria-label="Trip views and selection">
+                  <button type="button" aria-pressed={listMode === "list"} onClick={() => setListMode("list")}>List</button>
+                  <button type="button" aria-pressed={listMode === "timeline"} onClick={() => setListMode("timeline")}>Timeline</button>
+                  <button type="button" className="ghost-btn" aria-pressed={selectionMode} onClick={() => { setSelectionMode(!selectionMode); setSelectedTripIds([]); }}>{selectionMode ? "Done" : "Select"}</button>
+                </div>
+                {selectionMode ? <div className="selection-bar"><span>{selectedTrips.length} selected</span><button type="button" disabled={!selectedTrips.length} onClick={() => { mapReturnRef.current = null; navigateTab("map"); }}>View on Map</button><button type="button" className="ghost-btn" onClick={() => setSelectedTripIds([])}>Clear selection</button></div> : null}
                 <div className="trips-header">
                   <div className="trips-controls">
                     <div className="sort-control">
@@ -2355,10 +1748,11 @@ export default function App() {
                   </div>
                 </div>
                 {loading ? <p>Loading...</p> : null}
-                {!loading && !displayedTrips.length ? <p>No trips yet.</p> : null}
+                {!loading && !displayedTrips.length ? <div className="empty-guidance"><h3>{trips.length ? "No trips match your filters" : "Your first trip starts here"}</h3><p>{trips.length ? "Try a different search, type, or family member." : "Add a trip with just a name. You can add places and people later."}</p>{trips.length ? <button type="button" className="ghost-btn" onClick={() => { setQuery(""); setSelectedTripKindFilter("all"); setSelectedPeopleFilters([]); }}>Clear filters</button> : null}</div> : null}
                 {tripEdit ? (
-                  <div className="edit-card">
+                  <div className="edit-card" id="trip-edit-form">
                     <h3>Edit Trip</h3>
+                    {tripConflictId === tripEdit.id ? <div role="alert" className="form-warning"><p>Your draft is kept. This trip has changed; review the latest trip before starting a fresh edit.</p><button type="button" className="ghost-btn" onClick={reviewLatestTrip}>Review latest trip</button></div> : null}
                     <label>
                       Trip Name
                       <input value={tripEdit.title} onChange={onTripEditChange("title")} />
@@ -2367,7 +1761,7 @@ export default function App() {
                       Trip Type
                       <select value={tripEdit.trip_kind} onChange={onTripEditChange("trip_kind")}>
                         <option value="past">Past Trip</option>
-                        <option value="wishlist">Wish List (no date yet)</option>
+                        <option value="wishlist">Wishlist</option>
                       </select>
                     </label>
                     <div className="row">
@@ -2378,7 +1772,7 @@ export default function App() {
                           value={tripEdit.start_date}
                           onChange={onTripEditChange("start_date")}
                           max={tripEdit.end_date || undefined}
-                          disabled={normalizeTripKind(tripEdit.trip_kind) === "wishlist"}
+
                         />
                       </label>
                       <label>
@@ -2388,12 +1782,12 @@ export default function App() {
                           value={tripEdit.end_date}
                           onChange={onTripEditChange("end_date")}
                           min={tripEdit.start_date || undefined}
-                          disabled={normalizeTripKind(tripEdit.trip_kind) === "wishlist"}
+
                         />
                       </label>
                     </div>
                     {normalizeTripKind(tripEdit.trip_kind) === "wishlist" ? (
-                      <p className="helper-text">Wish list trips keep dates empty until you finalize plans.</p>
+                      <p className="helper-text">Dates are optional. Changing trip type keeps the dates you entered.</p>
                     ) : null}
                     {editDateRangeInvalid ? (
                       <p className="form-warning">End date cannot be earlier than start date.</p>
@@ -2412,6 +1806,7 @@ export default function App() {
                           </label>
                         ))}
                       </div>
+                      {(tripEdit.unmatched_people || []).map((name) => <label key={name} className="member-item"><input type="checkbox" checked={!(tripEdit.excluded_people || []).includes(name)} onChange={(event) => { const checked = event.target.checked; setTripEdit((prev) => ({ ...prev, excluded_people: checked ? prev.excluded_people.filter((entry) => entry !== name) : [...prev.excluded_people, name] })); }} /><span>{name} (saved on this trip)</span></label>)}
                     </fieldset>
                     <label>
                       Notes
@@ -2458,11 +1853,15 @@ export default function App() {
                       />
                     </div>
                     <div className="action-row">
-                      <button type="button" onClick={onSaveTripEdit} disabled={editDateRangeInvalid}>Save Changes</button>
+                      <button type="button" onClick={onSaveTripEdit} disabled={editDateRangeInvalid || tripSaving}>{tripSaving ? "Saving…" : "Save Changes"}</button>
                       <button
                         type="button"
                         className="ghost-btn"
                         onClick={() => {
+                          if (!window.confirm("Discard this unfinished edit?")) return;
+                          drafts.clear();
+                          setTripConflictId(null);
+                          setDetailTripId(tripEdit.id);
                           setTripEdit(null);
                           setRouteSearchTarget("create");
                         }}
@@ -2472,25 +1871,25 @@ export default function App() {
                     </div>
                   </div>
                 ) : null}
-                <ul className="trip-list">
-                  {displayedTrips.map((trip) => {
+                <ul className={`trip-list ${listMode === "timeline" ? "trip-timeline" : ""}`}>
+                  {(listMode === "timeline" ? sortTrips(displayedTrips, "date_desc") : displayedTrips).map((trip) => {
                     return (
                       <li
                         key={trip.id}
                         className={selectedTripIdsSet.has(trip.id) ? "is-selected" : ""}
-                        onClick={() => toggleTripSelection(trip.id)}
-                        role="button"
-                        tabIndex={0}
-                        onKeyDown={(event) => {
-                          if (event.key === "Enter" || event.key === " ") {
-                            event.preventDefault();
-                            toggleTripSelection(trip.id);
-                          }
+                        onClick={(event) => {
+                          if (!event.target.closest("button, input, label, summary, details, a")) openDetails(trip);
                         }}
                       >
                         <div className="trip-header">
-                          <h3>{trip.title}</h3>
+                          <div className="trip-open-heading">
+                            {selectionMode ? <label className="trip-checkbox"><input type="checkbox" checked={selectedTripIdsSet.has(trip.id)} onChange={() => toggleTripSelection(trip.id)} aria-label={`Select ${trip.title}`} />Select</label> : null}
+                            <h3><button type="button" className="trip-title-button" onClick={() => openDetails(trip)}>{trip.title}</button></h3>
+                          </div>
                           <div className="trip-actions">
+                            <button type="button" className="ghost-btn" onClick={() => openTripMap(trip)}>Map</button>
+                            <button type="button" className="ghost-btn" onClick={() => setAddStopTarget({ tripId: trip.id })}>Add Stop</button>
+                            <details className="trip-overflow"><summary>More</summary><div className="trip-overflow-actions">
                             <button
                               type="button"
                               className="edit-btn"
@@ -2509,7 +1908,7 @@ export default function App() {
                                 setCalendarSyncTripId((prev) => (prev === trip.id ? null : trip.id));
                               }}
                             >
-                              Calendar Sync
+                              Calendar
                             </button>
                             <button
                               type="button"
@@ -2520,12 +1919,13 @@ export default function App() {
                             >
                               Delete
                             </button>
+                            </div></details>
                           </div>
                         </div>
                         <p>
-                          {trip.start_date || "Unknown start"} - {trip.end_date || "Unknown end"}
+                          {trip.start_date || "Dates not set"}{trip.end_date ? ` – ${trip.end_date}` : ""}
                         </p>
-                        <p><strong>Type:</strong> {getTripKindLabel(trip.trip_kind)}</p>
+                        <p><strong>{getTripKindLabel(trip.trip_kind)}</strong></p>
                         <p>{trip.notes}</p>
                         {trip.people?.length ? <p><strong>People:</strong> {trip.people.join(", ")}</p> : null}
                         {trip.accommodations?.length ? (
@@ -2547,22 +1947,19 @@ export default function App() {
                             </button>
                           </div>
                         ) : null}
-                        <div className="trip-itinerary-block">
-                          <h4>Day-by-Day Itinerary</h4>
-                          <TripItineraryTimeline trip={trip} />
-                        </div>
+
                       </li>
                     );
                   })}
                 </ul>
-              </>
-            ) : null}
+            </div>
 
             {activeTab === "map" ? (
               <div className="map-tab-card">
                 <h3>Map</h3>
+                <button type="button" className="ghost-btn" onClick={returnFromMap}>Back to {mapReturnRef.current?.detail ? "trip details" : "trips"}</button>
                 <p className="helper-text">
-                  The interactive map stays open on the right side. Use Trips to add or edit route stops, then use this Map view to focus on route layers.
+                  Explore your saved places and routes. Choose a trip in Trips to focus the map on its stops.
                 </p>
               </div>
             ) : null}
@@ -2676,7 +2073,7 @@ export default function App() {
           </div>
         </section>
 
-        <section className="panel map-panel" aria-label="Map">
+        {activeTab === "map" || (activeTab === "trips" && (showCreateTrip || tripEdit)) ? <section className="panel map-panel" aria-label="Map">
           <div className="map-header">
             <h2>Map</h2>
             <div className="map-layer-controls">
@@ -2706,6 +2103,7 @@ export default function App() {
               </label>
             </div>
           </div>
+          {showSavedTripMapLayers && !visibleMapTrips.some((trip) => trip.route?.length) ? <div className="empty-guidance" role="status"><strong>{visibleMapTrips.length ? "These trips don't have map stops yet" : "No trips match your filters"}</strong><p>{visibleMapTrips.length ? "Use Add Stop from a trip to show its places here." : "Try a different search, type, or family member."}</p></div> : null}
           <MapContainer
             center={mapCenter}
             zoom={4}
@@ -2728,7 +2126,7 @@ export default function App() {
               bounds={[[-85, -180], [85, 180]]}
             />
             {showSavedTripMapLayers && showHeatmap ? <TripHeatmapLayer trips={heatmapTrips} /> : null}
-            {showSavedTripMapLayers ? displayedTrips.map((trip) => {
+            {showSavedTripMapLayers ? visibleMapTrips.map((trip) => {
               const isSelected = selectedTripIdsSet.has(trip.id);
               const shouldHighlight = !hasExplicitSelection || isSelected;
               const orderedRoute = getOrderedRoutePoints(trip.route);
@@ -2766,14 +2164,14 @@ export default function App() {
             }) : null}
             {showSavedTripMapLayers && showMarkerClusters ? (
               <ClusteredTripMarkers
-                trips={displayedTrips}
+                trips={visibleMapTrips}
                 selectedTripIdsSet={selectedTripIdsSet}
                 hasExplicitSelection={hasExplicitSelection}
                 onToggleTripSelection={toggleTripSelection}
                 onShowTripDetail={showTripDetail}
               />
             ) : showSavedTripMapLayers ? (
-              displayedTrips.map((trip) => {
+              visibleMapTrips.map((trip) => {
                 const isSelected = selectedTripIdsSet.has(trip.id);
                 const shouldHighlight = !hasExplicitSelection || isSelected;
                 return (trip.route || []).map((point, idx) => (
@@ -2830,9 +2228,10 @@ export default function App() {
               </Popup>
             ) : null}
           </MapContainer>
-        </section>
+        </section> : null}
 
       </main>
+      </div>
     </div>
   );
 }

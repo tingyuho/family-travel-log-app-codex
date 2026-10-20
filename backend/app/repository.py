@@ -24,6 +24,7 @@ from .schemas import (
     Trip,
     TripCreate,
     TripUpdate,
+    TripStopCreate,
     UserProfile,
 )
 
@@ -48,6 +49,7 @@ def _row_to_trip(row: Any) -> Trip:
     if trip_kind not in {"past", "wishlist"}:
         trip_kind = "past"
     return Trip(
+        version=row["version"],
         id=row["id"],
         title=row["title"],
         trip_kind=trip_kind,
@@ -131,32 +133,55 @@ def create_trip(user_id: str, payload: TripCreate) -> Trip:
     return trip
 
 
+class TripConflictError(Exception):
+    pass
+
+
+class TripVersionRequiredError(Exception):
+    pass
+
+
 def update_trip(user_id: str, trip_id: int, payload: TripUpdate) -> Trip | None:
+    if payload.version is None:
+        if get_trip(user_id, trip_id) is None:
+            return None
+        raise TripVersionRequiredError()
     data = _serialize_trip_payload(payload)
     with get_connection() as conn:
-        cursor = conn.execute(
+        row = conn.execute(
             """
             UPDATE trips
-            SET title = ?, trip_kind = ?, start_date = ?, end_date = ?, notes = ?, route_json = ?, people_json = ?, accommodations_json = ?, itinerary_json = ?, updated_at = CURRENT_TIMESTAMP
-            WHERE id = ? AND user_id = ?
+            SET title = ?, trip_kind = ?, start_date = ?, end_date = ?, notes = ?, route_json = ?, people_json = ?, accommodations_json = ?, itinerary_json = ?, updated_at = CURRENT_TIMESTAMP, version = version + 1
+            WHERE id = ? AND user_id = ? AND version = ?
+            RETURNING *
             """,
-            (
-                data["title"],
-                data["trip_kind"],
-                data["start_date"],
-                data["end_date"],
-                data["notes"],
-                data["route_json"],
-                data["people_json"],
-                data["accommodations_json"],
-                data["itinerary_json"],
-                trip_id,
-                user_id,
-            ),
-        )
-    if cursor.rowcount == 0:
+            (data["title"], data["trip_kind"], data["start_date"], data["end_date"], data["notes"],
+             data["route_json"], data["people_json"], data["accommodations_json"], data["itinerary_json"],
+             trip_id, user_id, payload.version),
+        ).fetchone()
+    if row is not None:
+        return _row_to_trip(row)
+    if get_trip(user_id, trip_id) is None:
         return None
-    return get_trip(user_id, trip_id)
+    raise TripConflictError()
+
+
+def append_trip_stop(user_id: str, trip_id: int, payload: TripStopCreate) -> Trip | None:
+    # Retry only rejected writes: a successful append is never submitted twice.
+    for _attempt in range(5):
+        current = get_trip(user_id, trip_id)
+        if current is None:
+            return None
+        route = sorted(current.route, key=lambda point: point.order or 0)
+        route = [point.model_copy(update={"order": index}) for index, point in enumerate(route)]
+        route.append(payload.point.model_copy(update={"order": len(route)}))
+        itinerary = current.itinerary + ([payload.itinerary_event] if payload.itinerary_event else [])
+        update = TripUpdate(**{**current.model_dump(), "route": route, "itinerary": itinerary})
+        try:
+            return update_trip(user_id, trip_id, update)
+        except TripConflictError:
+            continue
+    raise TripConflictError()
 
 
 def delete_trip(user_id: str, trip_id: int) -> bool:

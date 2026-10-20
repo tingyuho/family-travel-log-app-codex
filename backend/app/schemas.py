@@ -58,10 +58,16 @@ class TripCreate(TripBase):
 
 
 class TripUpdate(TripBase):
-    pass
+    version: int | None = Field(default=None, ge=1)
+
+
+class TripStopCreate(BaseModel):
+    point: RoutePoint
+    itinerary_event: ItineraryEvent | None = None
 
 
 class Trip(TripBase):
+    version: int = Field(default=1, ge=1)
     id: int
     created_at: datetime
     updated_at: datetime

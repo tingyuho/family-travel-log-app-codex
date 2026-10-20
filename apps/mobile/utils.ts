@@ -1,6 +1,7 @@
 import type { AccommodationInput, ItineraryEventInput, RoutePoint, Trip, TripWritePayload } from "./api";
 
 export type TripDraftShape = {
+  version?: number;
   title: string;
   trip_kind: "past" | "wishlist";
   start_date: string;
@@ -238,10 +239,11 @@ export function buildTripPayload(draft: TripDraftShape): TripWritePayload {
   }
 
   return {
+    version: draft.version,
     title: draft.title.trim(),
     trip_kind: draft.trip_kind,
-    start_date: draft.trip_kind === "wishlist" ? null : normalizeDate(draft.start_date),
-    end_date: draft.trip_kind === "wishlist" ? null : normalizeDate(draft.end_date),
+    start_date: normalizeDate(draft.start_date),
+    end_date: normalizeDate(draft.end_date),
     notes: draft.notes.trim(),
     route: parseRouteText(draft.route_text),
     people: uniqNames(draft.selected_people),

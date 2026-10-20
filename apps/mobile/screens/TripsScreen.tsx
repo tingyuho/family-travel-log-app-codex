@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ActivityIndicator, Alert, Pressable, Text, View } from "react-native";
 
 import { searchPlaces, type AccommodationInput, type ItineraryEventInput, type PersonProfile, type PlaceSuggestion, type Trip } from "../api";
+import { ItineraryDateTimeControls, StayDateControls, DateSelectorButton, InlineCalendarPicker, shiftCalendarCursor, getCalendarCursor, getTodayIsoDate } from "../components/TripDateControls";
 import QuickStopTripPicker from "../components/QuickStopTripPicker";
 import type { TripDraftForm, TripFilterKind } from "../forms";
 import { getOrderedRoutePoints } from "../mapLayers";
@@ -9,9 +10,7 @@ import type { AppStyles, FieldComponent, SegmentButtonComponent, StateSetter } f
 import { groupTripsByTimeline } from "../travelInsights";
 import { tripPickerDateLabel } from "../tripPicker";
 import {
-  addDaysToDateString,
   getRouteTextError,
-  getStayNightCount,
   getTripValidationSummary,
   hasTripDraftContent,
   isIsoDateString,
@@ -56,7 +55,7 @@ type TripsScreenProps = {
   removeRouteStop: (index: number) => void;
   emptyAccommodation: () => AccommodationInput;
   emptyItinerary: () => ItineraryEventInput;
-  handleSaveTrip: () => boolean | Promise<boolean>;
+  handleSaveTrip: () => Trip | null | Promise<Trip | null>;
   resetTripEditor: () => void;
   isInvalidDateRange: (start?: string | null, end?: string | null) => boolean;
   allTrips: Trip[];
@@ -77,6 +76,7 @@ type TripsScreenProps = {
     notes: string;
   }) => Promise<boolean>;
   tripFormValidation: TripFormValidation;
+  onViewChange?: (view: string) => void;
   detailsTripId?: number | null;
   onDetailsTripOpened?: () => void;
 };
@@ -92,7 +92,7 @@ type QuickStopDraft = {
 const editorSteps: Array<{ key: TripEditorStep; label: string }> = [
   { key: "basic", label: "Basic" },
   { key: "people", label: "People" },
-  { key: "route", label: "Route" },
+  { key: "route", label: "Places" },
   { key: "stays", label: "Stays" },
   { key: "itinerary", label: "Itinerary" },
 ];
@@ -104,14 +104,6 @@ const sortOptions: Array<[TripSort, string]> = [
   ["name_desc", "Name Z-A"],
 ];
 
-const itineraryTimeOptions = [
-  { label: "Morning", value: "09:00" },
-  { label: "Lunch", value: "12:00" },
-  { label: "Afternoon", value: "14:00" },
-  { label: "Dinner", value: "18:00" },
-  { label: "Evening", value: "20:00" },
-];
-const calendarWeekdayLabels = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
 export default function TripsScreen(props: TripsScreenProps) {
   const {
@@ -155,16 +147,23 @@ export default function TripsScreen(props: TripsScreenProps) {
     confirmDeleteTrip,
     saveQuickStopToTrip,
     tripFormValidation,
+    onViewChange,
     detailsTripId,
     onDetailsTripOpened,
   } = props;
 
   const [tripsView, setTripsView] = useState<TripsView>("list");
   const [tripListMode, setTripListMode] = useState<TripListMode>("cards");
+  const tripSaveLock = useRef(false);
+  const quickStopSaveLock = useRef(false);
+  const [tripSaving, setTripSaving] = useState(false);
+  const [selectionMode, setSelectionMode] = useState(false);
+  const [quickStopSaving, setQuickStopSaving] = useState(false);
   const [expandedMoreTripId, setExpandedMoreTripId] = useState<number | null>(null);
   const [tripEditorStep, setTripEditorStep] = useState<TripEditorStep>("basic");
   const [showManualRouteEditor, setShowManualRouteEditor] = useState(false);
   const [detailTripId, setDetailTripId] = useState<number | null>(null);
+  const [detailSection, setDetailSection] = useState<"Itinerary" | "Places" | "Stays">("Itinerary");
   const [activeBasicDateField, setActiveBasicDateField] = useState<BasicTripDateField | null>(null);
   const [basicCalendarCursor, setBasicCalendarCursor] = useState(() =>
     getCalendarCursor(tripDraft.start_date || tripDraft.end_date || getTodayIsoDate())
@@ -188,6 +187,8 @@ export default function TripsScreen(props: TripsScreenProps) {
   const [showQuickStopTripPicker, setShowQuickStopTripPicker] = useState(false);
   const [quickStopReturnView, setQuickStopReturnView] = useState<"list" | "details">("list");
   const quickStopDebounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  useEffect(() => { onViewChange?.(tripsView); }, [tripsView, onViewChange]);
 
   const routeStops = useMemo(() => parseRouteLines(tripDraft.route_text), [tripDraft.route_text]);
   const detailTrip = useMemo(
@@ -244,15 +245,15 @@ export default function TripsScreen(props: TripsScreenProps) {
   ]
     .filter(Boolean)
     .join(" | ");
-  const editorStatus = tripEditingId ? "Editing saved trip" : hasDraft ? "Unsaved trip in progress" : "Start a new trip";
+  const editorStatus = tripEditingId ? "Editing saved trip" : hasDraft ? "Unsaved trip in progress" : "Start with a name. Everything else is optional.";
   const dateRangeInvalid = isInvalidDateRange(tripDraft.start_date, tripDraft.end_date);
   const validationSummary = getTripValidationSummary(tripFormValidation);
-  const canSaveTrip = Boolean(tripDraft.title.trim()) && !dateRangeInvalid && !validationSummary && !routeTextError;
+  const canSaveTrip = !tripSaving && Boolean(tripDraft.title.trim()) && !dateRangeInvalid && !validationSummary && !routeTextError;
   const activeBasicDateValue = activeBasicDateField ? tripDraft[activeBasicDateField] : "";
   const saveTripHint = !tripDraft.title.trim()
-    ? "Add a trip title before saving to the shared database."
+    ? "Add a trip name to create your trip."
     : dateRangeInvalid
-      ? "Fix the date range before saving to the shared database."
+      ? "End date must be on or after start date."
       : validationSummary
         ? validationSummary
         : routeTextError
@@ -268,15 +269,10 @@ export default function TripsScreen(props: TripsScreenProps) {
   useEffect(() => {
     if (!detailsTripId) return;
     setDetailTripId(detailsTripId);
+    setDetailSection("Itinerary");
     setTripsView("details");
     onDetailsTripOpened?.();
   }, [detailsTripId, onDetailsTripOpened]);
-
-  useEffect(() => {
-    if (tripDraft.trip_kind !== "past") {
-      setActiveBasicDateField(null);
-    }
-  }, [tripDraft.trip_kind]);
 
   useEffect(() => {
     if (!activeBasicDateField || !isIsoDateString(activeBasicDateValue)) return;
@@ -284,21 +280,26 @@ export default function TripsScreen(props: TripsScreenProps) {
   }, [activeBasicDateField, activeBasicDateValue]);
 
   useEffect(() => {
+    let cancelled = false;
     if (quickStopDebounceRef.current) clearTimeout(quickStopDebounceRef.current);
-    if (tripsView !== "quickAdd") return;
-
     const query = quickStopDraft.query.trim();
-    if (query.length < 2 || quickStopDraft.place) {
-      setQuickStopSuggestions([]);
+    setQuickStopSuggestions([]);
+    setQuickStopError("");
+    if (tripsView !== "quickAdd" || query.length < 2 || quickStopDraft.place) {
       setQuickStopSearching(false);
       return;
     }
-
-    quickStopDebounceRef.current = setTimeout(() => {
-      void searchQuickStopPlaces(query);
+    setQuickStopSearching(true);
+    quickStopDebounceRef.current = setTimeout(async () => {
+      try {
+        const results = await searchPlaces(query);
+        if (!cancelled) setQuickStopSuggestions(Array.isArray(results) ? results : []);
+      } catch {
+        if (!cancelled) setQuickStopError("Couldn't search places. Try again.");
+      } finally { if (!cancelled) setQuickStopSearching(false); }
     }, 350);
-
     return () => {
+      cancelled = true;
       if (quickStopDebounceRef.current) clearTimeout(quickStopDebounceRef.current);
     };
   }, [quickStopDraft.place, quickStopDraft.query, tripsView]);
@@ -361,7 +362,7 @@ export default function TripsScreen(props: TripsScreenProps) {
   }
 
   function openQuickStop(trip?: Trip) {
-    const defaultTrip = trip || displayedTrips[0] || allTrips[0] || null;
+    const defaultTrip = trip || null;
     setQuickStopReturnView(trip ? "details" : "list");
     setShowQuickStopTripPicker(false);
     setQuickStopDraft({
@@ -374,19 +375,29 @@ export default function TripsScreen(props: TripsScreenProps) {
     setQuickStopSuggestions([]);
     setQuickStopError("");
     setTripsView("quickAdd");
+    if (!defaultTrip && allTrips.length) setShowQuickStopTripPicker(true);
   }
 
   function startFocusedTripEdit(trip: Trip) {
-    setExpandedMoreTripId(null);
-    startTripEdit(trip);
-    setTripEditorStep("basic");
-    setShowManualRouteEditor(false);
-    setTripsView("edit");
+    const open = () => {
+      setExpandedMoreTripId(null);
+      startTripEdit(trip);
+      setTripEditorStep("basic");
+      setShowManualRouteEditor(false);
+      setTripsView("edit");
+    };
+    if (hasDraft || tripEditingId) {
+      Alert.alert("Replace unfinished edit?", "Your current draft will be replaced with the saved trip.", [
+        { text: "Keep draft", style: "cancel" },
+        { text: "Replace draft", style: "destructive", onPress: open },
+      ]);
+    } else open();
   }
 
   function openTripDetails(trip: Trip) {
     setExpandedMoreTripId(null);
     setDetailTripId(trip.id);
+    setDetailSection("Itinerary");
     setTripsView("details");
   }
 
@@ -396,7 +407,6 @@ export default function TripsScreen(props: TripsScreenProps) {
   }
 
   function toggleBasicDateField(field: BasicTripDateField) {
-    if (tripDraft.trip_kind !== "past") return;
 
     const nextField = activeBasicDateField === field ? null : field;
     setActiveBasicDateField(nextField);
@@ -452,26 +462,27 @@ export default function TripsScreen(props: TripsScreenProps) {
   }
 
   async function saveFocusedTrip() {
-    const saved = await handleSaveTrip();
-    if (saved) {
-      setTripsView("list");
-      setTripEditorStep("basic");
-      setShowManualRouteEditor(false);
-    }
+    if (tripSaveLock.current) return;
+    tripSaveLock.current = true;
+    setTripSaving(true);
+    try {
+      const saved = await handleSaveTrip();
+      if (saved) {
+        setDetailTripId(saved.id);
+        setTripsView("details");
+        setTripEditorStep("basic");
+        setShowManualRouteEditor(false);
+      }
+    } finally { tripSaveLock.current = false; setTripSaving(false); }
   }
 
-  async function searchQuickStopPlaces(query: string) {
-    setQuickStopSearching(true);
-    setQuickStopError("");
-    try {
-      const suggestions = await searchPlaces(query);
-      setQuickStopSuggestions(Array.isArray(suggestions) ? suggestions : []);
-    } catch (error) {
-      setQuickStopSuggestions([]);
-      setQuickStopError(error instanceof Error ? error.message : "Could not search places.");
-    } finally {
-      setQuickStopSearching(false);
-    }
+  function requestQuickStopBack() {
+    if (quickStopSaveLock.current) return;
+    if (!quickStopDraft.query.trim() && !quickStopDraft.notes.trim()) { setTripsView(quickStopReturnView); return; }
+    Alert.alert("Discard stop?", "This stop hasn't been saved yet.", [
+      { text: "Keep Editing", style: "cancel" },
+      { text: "Discard", style: "destructive", onPress: () => setTripsView(quickStopReturnView) },
+    ]);
   }
 
   function selectQuickStopPlace(place: PlaceSuggestion) {
@@ -496,12 +507,21 @@ export default function TripsScreen(props: TripsScreenProps) {
       return;
     }
 
-    const saved = await saveQuickStopToTrip({
-      tripId: targetTrip.id,
-      place: quickStopDraft.place,
-      label: quickStopDraft.label.trim() || quickStopDraft.place.display_name.split(",")[0].trim() || "Quick stop",
-      notes: quickStopDraft.notes,
-    });
+    if (quickStopSaveLock.current) return;
+    quickStopSaveLock.current = true;
+    setQuickStopSaving(true);
+    let saved = false;
+    try {
+      saved = await saveQuickStopToTrip({
+        tripId: targetTrip.id,
+        place: quickStopDraft.place,
+        label: quickStopDraft.label.trim() || quickStopDraft.place.display_name.split(",")[0].trim() || "Stop",
+        notes: quickStopDraft.notes,
+      });
+    } finally {
+      quickStopSaveLock.current = false;
+      setQuickStopSaving(false);
+    }
 
     if (saved) {
       setQuickStopDraft({ tripId: null, query: "", label: "", notes: "", place: null });
@@ -574,8 +594,6 @@ export default function TripsScreen(props: TripsScreenProps) {
                 setTripDraft((prev) => ({
                   ...prev,
                   trip_kind: "wishlist",
-                  start_date: "",
-                  end_date: "",
                 }))
               }
             />
@@ -586,7 +604,6 @@ export default function TripsScreen(props: TripsScreenProps) {
               label="Start"
               value={tripDraft.start_date}
               active={activeBasicDateField === "start_date"}
-              disabled={tripDraft.trip_kind !== "past"}
               onPress={() => toggleBasicDateField("start_date")}
             />
             <DateSelectorButton
@@ -594,18 +611,17 @@ export default function TripsScreen(props: TripsScreenProps) {
               label="End"
               value={tripDraft.end_date}
               active={activeBasicDateField === "end_date"}
-              disabled={tripDraft.trip_kind !== "past"}
               onPress={() => toggleBasicDateField("end_date")}
             />
           </View>
-          {tripDraft.trip_kind === "past" ? (
+          <View>
             <Text style={styles.helperText}>
               {activeBasicDateField
                 ? `Pick the ${activeBasicDateField === "start_date" ? "start" : "end"} date from the calendar below.`
-                : "Tap Start or End to choose dates from a calendar."}
+                : "Tap Start or End to choose optional dates."}
             </Text>
-          ) : null}
-          {tripDraft.trip_kind === "past" && activeBasicDateField ? (
+          </View>
+          {activeBasicDateField ? (
             <InlineCalendarPicker
               styles={styles}
               label={activeBasicDateField === "start_date" ? "Start date" : "End date"}
@@ -618,7 +634,7 @@ export default function TripsScreen(props: TripsScreenProps) {
             />
           ) : null}
           {tripDraft.trip_kind === "wishlist" ? (
-            <Text style={styles.helperText}>Wishlist trips keep dates empty until your plans are firm.</Text>
+            <Text style={styles.helperText}>Dates are optional. You can keep planned dates or clear them in the date picker.</Text>
           ) : null}
           {isInvalidDateRange(tripDraft.start_date, tripDraft.end_date) ? (
             <Text style={styles.error}>Trip end date cannot be before start date.</Text>
@@ -853,7 +869,8 @@ export default function TripsScreen(props: TripsScreenProps) {
         <View style={styles.formBlock}>
           <View style={styles.filterGroup}>
             <Text style={styles.filterGroupTitle}>Search</Text>
-            <Field label="Search trips" value={filterDraft.search} onChangeText={(search) => setFilterDraft((prev) => ({ ...prev, search }))} />
+            {hasDraft || tripEditingId ? <Pressable accessibilityRole="button" style={styles.tripActionButton} onPress={() => setTripsView(tripEditingId ? "edit" : "new")}><Text style={styles.tripActionText}>Continue draft</Text></Pressable> : null}
+      <Field label="Search trips" value={filterDraft.search} onChangeText={(search) => setFilterDraft((prev) => ({ ...prev, search }))} />
           </View>
           <View style={styles.filterGroup}>
             <Text style={styles.filterGroupTitle}>Trip Type</Text>
@@ -920,16 +937,16 @@ export default function TripsScreen(props: TripsScreenProps) {
 
   if (tripsView === "quickAdd") {
     const selectedQuickTrip = allTrips.find((trip) => trip.id === quickStopDraft.tripId) || null;
-    const canSaveQuickStop = Boolean(selectedQuickTrip && quickStopDraft.place);
+    const canSaveQuickStop = Boolean(selectedQuickTrip && quickStopDraft.place && !quickStopSaving);
 
     return (
       <View style={styles.panel}>
         <View style={styles.sectionHeader}>
-          <Pressable accessibilityRole="button" accessibilityLabel={quickStopReturnView === "details" ? "Back to trip details" : "Back to trips list"} style={styles.textButton} onPress={() => setTripsView(quickStopReturnView)}>
+          <Pressable accessibilityRole="button" accessibilityLabel={quickStopReturnView === "details" ? "Back to trip details" : "Back to trips list"} style={styles.textButton} onPress={requestQuickStopBack}>
             <Text style={styles.textButtonLabel}>Back</Text>
           </Pressable>
           <View style={styles.rowCardText}>
-            <Text style={styles.sectionTitle}>Quick Stop</Text>
+            <Text style={styles.sectionTitle}>Add Stop</Text>
             <Text style={styles.meta}>Save a place fast, then keep moving.</Text>
           </View>
         </View>
@@ -997,13 +1014,13 @@ export default function TripsScreen(props: TripsScreenProps) {
           ))}
 
           <Field
-            label="Stop label"
+            label="Stop name"
             value={quickStopDraft.label}
             onChangeText={(label) => setQuickStopDraft((prev) => ({ ...prev, label }))}
             placeholder="Snack stop, museum, hotel..."
           />
           <Field
-            label="Quick note"
+            label="Note (optional)"
             value={quickStopDraft.notes}
             onChangeText={(notes) => setQuickStopDraft((prev) => ({ ...prev, notes }))}
             multiline
@@ -1022,9 +1039,9 @@ export default function TripsScreen(props: TripsScreenProps) {
               style={[styles.primaryButton, !canSaveQuickStop && styles.disabled]}
               onPress={() => void saveQuickStop()}
             >
-              <Text style={styles.primaryButtonText}>Save Stop</Text>
+              <Text style={styles.primaryButtonText}>{quickStopSaving ? "Saving…" : "Save Stop"}</Text>
             </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Cancel quick stop" style={styles.secondaryButton} onPress={() => setTripsView(quickStopReturnView)}>
+            <Pressable accessibilityRole="button" accessibilityLabel="Cancel quick stop" style={styles.secondaryButton} onPress={requestQuickStopBack}>
               <Text style={styles.secondaryButtonText}>Cancel</Text>
             </Pressable>
           </View>
@@ -1080,7 +1097,7 @@ export default function TripsScreen(props: TripsScreenProps) {
               onPress={() => void saveFocusedTrip()}
               disabled={!canSaveTrip}
             >
-              <Text style={styles.primaryButtonText}>{isEditingTrip ? "Save Changes" : "Save Trip"}</Text>
+              <Text style={styles.primaryButtonText}>{tripSaving ? "Saving…" : isEditingTrip ? "Save Changes" : "Create Trip"}</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -1134,6 +1151,7 @@ export default function TripsScreen(props: TripsScreenProps) {
             <Text style={styles.badge}>{detailTrip.trip_kind === "wishlist" ? "Wishlist" : "Past"}</Text>
           </View>
           <Text style={styles.cardMeta}>{formatDateRange(detailTrip.start_date, detailTrip.end_date)}</Text>
+          <Text style={styles.cardMeta}>{detailRouteStops.length} places · {detailTrip.people.length} travelers</Text>
           <Text style={styles.cardText}>{detailTrip.notes || "No notes saved."}</Text>
           <View style={styles.actionRowWrap}>
             <Pressable
@@ -1142,7 +1160,7 @@ export default function TripsScreen(props: TripsScreenProps) {
               style={styles.tripActionButton}
               onPress={() => openQuickStop(detailTrip)}
             >
-              <Text style={styles.tripActionText}>Quick Stop</Text>
+              <Text style={styles.tripActionText}>Add Stop</Text>
             </Pressable>
             <Pressable
               accessibilityRole="button"
@@ -1166,9 +1184,13 @@ export default function TripsScreen(props: TripsScreenProps) {
               style={styles.tripActionButton}
               onPress={() => void openGoogleCalendarForTrip(detailTrip)}
             >
-              <Text style={styles.tripActionText}>Cal</Text>
+              <Text style={styles.tripActionText}>Calendar</Text>
             </Pressable>
           </View>
+        </View>
+
+        <View style={styles.plannerDetailTabs}>
+          {(["Itinerary", "Places", "Stays"] as const).map((section) => <Pressable key={section} accessibilityRole="button" accessibilityLabel={`Show trip ${section.toLowerCase()}`} accessibilityState={{ selected: detailSection === section }} style={[styles.plannerDetailTab, detailSection === section && styles.plannerDetailTabActive]} onPress={() => setDetailSection(section)}><Text style={[styles.plannerDetailTabText, detailSection === section && styles.plannerDetailTabTextActive]}>{section}</Text></Pressable>)}
         </View>
 
         <View style={styles.inlineCard}>
@@ -1176,7 +1198,7 @@ export default function TripsScreen(props: TripsScreenProps) {
           <Text style={styles.cardText}>{detailTrip.people.length ? detailTrip.people.join(", ") : "No people saved."}</Text>
         </View>
 
-        <View style={styles.inlineCard}>
+        {detailSection === "Places" ? <View style={styles.inlineCard}>
           <Text style={styles.cardTitleSmall}>Route</Text>
           {detailRouteStops.length ? (
             detailRouteStops.map((point, index) => (
@@ -1192,9 +1214,9 @@ export default function TripsScreen(props: TripsScreenProps) {
           ) : (
             <Text style={styles.cardText}>No route stops saved.</Text>
           )}
-        </View>
+        </View> : null}
 
-        <View style={styles.inlineCard}>
+        {detailSection === "Stays" ? <View style={styles.inlineCard}>
           <Text style={styles.cardTitleSmall}>Accommodations</Text>
           {detailTrip.accommodations.length ? (
             detailTrip.accommodations.map((stay, index) => (
@@ -1210,9 +1232,9 @@ export default function TripsScreen(props: TripsScreenProps) {
           ) : (
             <Text style={styles.cardText}>No accommodations saved.</Text>
           )}
-        </View>
+        </View> : null}
 
-        <View style={styles.inlineCard}>
+        {detailSection === "Itinerary" ? <View style={styles.inlineCard}>
           <Text style={styles.cardTitleSmall}>Itinerary</Text>
           {detailTrip.itinerary.length ? (
             detailTrip.itinerary.map((item, index) => (
@@ -1229,13 +1251,19 @@ export default function TripsScreen(props: TripsScreenProps) {
           ) : (
             <Text style={styles.cardText}>No itinerary items saved.</Text>
           )}
-        </View>
+        </View> : null}
       </View>
     );
   }
 
   return (
     <View style={styles.panel}>
+      <Text style={styles.plannerEyebrow}>YOUR FAMILY WORKSPACE</Text>
+      <View style={styles.plannerStats}>
+        <View style={styles.plannerStat}><Text style={styles.plannerStatValue}>{allTrips.length}</Text><Text style={styles.meta}>All trips</Text></View>
+        <View style={styles.plannerStat}><Text style={styles.plannerStatValue}>{allTrips.filter((trip) => trip.trip_kind === "past").length}</Text><Text style={styles.meta}>Past trips</Text></View>
+        <View style={styles.plannerStat}><Text style={styles.plannerStatValue}>{allTrips.filter((trip) => trip.trip_kind === "wishlist").length}</Text><Text style={styles.meta}>Wishlist</Text></View>
+      </View>
       <View style={styles.sectionHeader}>
         <View>
           <Text style={styles.sectionTitle}>Trips</Text>
@@ -1262,18 +1290,20 @@ export default function TripsScreen(props: TripsScreenProps) {
           </Pressable>
         </View>
       </View>
-      <Text style={styles.filterSummaryLine}>{filterSummary}</Text>
+      <Field label="Search trips" value={tripSearch} onChangeText={setTripSearch} placeholder="Search trips, people, or places" />
+      {activeFilterCount ? <Text style={styles.filterSummaryLine}>{filterSummary}</Text> : null}
       <View style={styles.actionRowWrap}>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel={tripListMode === "timeline" ? "Show trips as cards" : "Show trip timeline"}
-          accessibilityState={{ selected: tripListMode === "timeline" }}
-          style={[styles.tripActionButton, tripListMode === "timeline" && styles.filterChipActive]}
-          onPress={() => setTripListMode((current) => (current === "timeline" ? "cards" : "timeline"))}
-        >
-          <Text style={[styles.tripActionText, tripListMode === "timeline" && styles.filterChipTextActive]}>
-            {tripListMode === "timeline" ? "Card List" : "Timeline"}
-          </Text>
+        {([['cards', 'List'], ['timeline', 'Timeline']] as const).map(([mode, label]) => (
+          <Pressable key={mode} accessibilityRole="button" accessibilityLabel={`Show trip ${label.toLowerCase()}`}
+            accessibilityState={{ selected: tripListMode === mode }}
+            style={[styles.tripActionButton, tripListMode === mode && styles.filterChipActive]}
+            onPress={() => setTripListMode(mode)}>
+            <Text style={[styles.tripActionText, tripListMode === mode && styles.filterChipTextActive]}>{label}</Text>
+          </Pressable>
+        ))}
+        <Pressable accessibilityRole="button" accessibilityLabel={selectionMode ? 'Finish selecting trips' : 'Select trips for map'}
+          style={styles.tripActionButton} onPress={() => { setSelectionMode(!selectionMode); clearTripSelections(); }}>
+          <Text style={styles.tripActionText}>{selectionMode ? 'Done' : 'Select'}</Text>
         </Pressable>
         <Pressable
           accessibilityRole="button"
@@ -1281,11 +1311,11 @@ export default function TripsScreen(props: TripsScreenProps) {
           style={styles.tripActionButton}
           onPress={() => openQuickStop()}
         >
-          <Text style={styles.tripActionText}>Quick Stop</Text>
+          <Text style={styles.tripActionText}>Add Stop</Text>
         </Pressable>
       </View>
 
-      {selectedTripIds.length ? (
+      {selectionMode && selectedTripIds.length ? (
         <View style={styles.selectedActionBar}>
           <View style={styles.selectedActionTextGroup}>
             <Text style={styles.selectedActionTitle}>{selectedTripIds.length} selected</Text>
@@ -1368,7 +1398,7 @@ export default function TripsScreen(props: TripsScreenProps) {
                         <View style={styles.cardTop}>
                           <Text style={styles.cardTitleSmall}>{trip.title}</Text>
                           <View style={styles.badgeRow}>
-                            {isSelected ? <Text style={styles.selectedBadge}>Selected</Text> : null}
+                            {selectionMode ? <Text style={styles.selectedBadge}>{isSelected ? "☑ Selected" : "☐ Select"}</Text> : null}
                             <Text style={styles.badge}>{trip.trip_kind === "wishlist" ? "Wishlist" : "Past"}</Text>
                           </View>
                         </View>
@@ -1376,15 +1406,15 @@ export default function TripsScreen(props: TripsScreenProps) {
                         {trip.people.length ? <Text style={styles.cardMeta}>{trip.people.join(", ")}</Text> : null}
                       </Pressable>
                       <View style={styles.actionRowWrap}>
-                        <Pressable
-                          accessibilityRole="button"
+                        {selectionMode ? <Pressable
+                          accessibilityRole="checkbox"
                           accessibilityLabel={`${isSelected ? "Unselect" : "Select"} ${trip.title}`}
-                          accessibilityState={{ selected: isSelected }}
+                          accessibilityState={{ checked: isSelected }}
                           style={styles.tripActionButton}
                           onPress={() => toggleTripSelection(trip.id)}
                         >
-                          <Text style={styles.tripActionText}>{isSelected ? "Unselect" : "Select"}</Text>
-                        </Pressable>
+                          <Text style={styles.tripActionText}>{isSelected ? "☑ Selected" : "☐ Select"}</Text>
+                        </Pressable> : null}
                         <Pressable
                           accessibilityRole="button"
                           accessibilityLabel={`Show ${trip.title} on map`}
@@ -1410,17 +1440,15 @@ export default function TripsScreen(props: TripsScreenProps) {
         return (
           <View key={trip.id} style={[styles.card, isSelected && styles.cardSelected]}>
             <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={`${isSelected ? "Unselect" : "Select"} ${trip.title}`}
-              accessibilityState={{ selected: isSelected }}
-              onPress={() => {
-                toggleTripSelection(trip.id);
-              }}
+              accessibilityRole={selectionMode ? "checkbox" : "button"}
+              accessibilityLabel={selectionMode ? `${isSelected ? "Unselect" : "Select"} ${trip.title}` : `Open ${trip.title}`}
+              accessibilityState={selectionMode ? { checked: isSelected } : undefined}
+              onPress={() => selectionMode ? toggleTripSelection(trip.id) : openTripDetails(trip)}
             >
               <View style={styles.cardTop}>
                 <Text style={styles.cardTitle}>{trip.title}</Text>
                 <View style={styles.badgeRow}>
-                  {isSelected ? <Text style={styles.selectedBadge}>Selected</Text> : null}
+                  {selectionMode ? <Text style={styles.selectedBadge}>{isSelected ? "☑ Selected" : "☐ Select"}</Text> : null}
                   <Text style={styles.badge}>{trip.trip_kind === "wishlist" ? "Wishlist" : "Past"}</Text>
                 </View>
               </View>
@@ -1488,483 +1516,4 @@ export default function TripsScreen(props: TripsScreenProps) {
       }) : null}
     </View>
   );
-}
-
-function ItineraryDateTimeControls({
-  styles,
-  Field,
-  date,
-  time,
-  tripStart,
-  tripEnd,
-  dateError,
-  onChange,
-}: {
-  styles: AppStyles;
-  Field: FieldComponent;
-  date: string;
-  time: string;
-  tripStart: string;
-  tripEnd: string;
-  dateError?: string;
-  onChange: (patch: Partial<ItineraryEventInput>) => void;
-}) {
-  const tripStartDate = isIsoDateString(tripStart) ? tripStart : "";
-  const tripEndDate = isIsoDateString(tripEnd) ? tripEnd : "";
-  const activeDate = isIsoDateString(date) ? date : tripStartDate;
-  const hasDate = Boolean(date);
-  const hasTime = Boolean(time);
-
-  return (
-    <View style={styles.stayDateCard}>
-      <Text style={styles.cardTitleSmall}>Event schedule</Text>
-      <View style={styles.twoCol}>
-        <View style={styles.dateInputColumn}>
-          <Field
-            label="Date"
-            value={date}
-            onChangeText={(nextDate) => onChange({ date: nextDate })}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </View>
-        <View style={styles.dateInputColumn}>
-          <Field
-            label="Time"
-            value={time}
-            onChangeText={(nextTime) => onChange({ time: nextTime })}
-            placeholder="09:00"
-            keyboardType="numbers-and-punctuation"
-          />
-        </View>
-      </View>
-      {dateError ? (
-        <Text style={styles.error}>{dateError}</Text>
-      ) : (
-        <Text style={styles.helperText}>Use the chips below to fill the schedule quickly, then adjust if needed.</Text>
-      )}
-      <Text style={styles.filterGroupTitle}>Date shortcuts</Text>
-      <View style={styles.segmentWrap}>
-        <DateQuickButton
-          styles={styles}
-          label="Trip start"
-          active={date === tripStartDate && Boolean(tripStartDate)}
-          disabled={!tripStartDate}
-          onPress={() => onChange({ date: tripStartDate })}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="Trip end"
-          active={date === tripEndDate && Boolean(tripEndDate)}
-          disabled={!tripEndDate}
-          onPress={() => onChange({ date: tripEndDate })}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="Previous day"
-          disabled={!activeDate}
-          onPress={() => onChange({ date: addDaysToDateString(activeDate, -1) })}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="Next day"
-          disabled={!activeDate}
-          onPress={() => onChange({ date: addDaysToDateString(activeDate, 1) })}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="Clear date"
-          disabled={!hasDate}
-          onPress={() => onChange({ date: "" })}
-        />
-      </View>
-      <Text style={styles.filterGroupTitle}>Time shortcuts</Text>
-      <View style={styles.segmentWrap}>
-        {itineraryTimeOptions.map((option) => (
-          <DateQuickButton
-            key={option.value}
-            styles={styles}
-            label={option.label}
-            active={time === option.value}
-            onPress={() => onChange({ time: option.value })}
-          />
-        ))}
-        <DateQuickButton
-          styles={styles}
-          label="Clear time"
-          disabled={!hasTime}
-          onPress={() => onChange({ time: "" })}
-        />
-      </View>
-    </View>
-  );
-}
-
-function StayDateControls({
-  styles,
-  Field,
-  checkIn,
-  checkOut,
-  tripStart,
-  tripEnd,
-  dateError,
-  onChange,
-}: {
-  styles: AppStyles;
-  Field: FieldComponent;
-  checkIn: string;
-  checkOut: string;
-  tripStart: string;
-  tripEnd: string;
-  dateError?: string;
-  onChange: (patch: Partial<AccommodationInput>) => void;
-}) {
-  const tripStartDate = isIsoDateString(tripStart) ? tripStart : "";
-  const tripEndDate = isIsoDateString(tripEnd) ? tripEnd : "";
-  const activeCheckIn = isIsoDateString(checkIn) ? checkIn : tripStartDate;
-  const nightCount = getStayNightCount(checkIn, checkOut);
-  const hasDates = Boolean(checkIn || checkOut);
-
-  function useTripDates() {
-    onChange({
-      check_in: tripStartDate || checkIn,
-      check_out: tripEndDate || checkOut,
-    });
-  }
-
-  function setOneNightStay() {
-    if (!activeCheckIn) return;
-    onChange({
-      check_in: activeCheckIn,
-      check_out: addDaysToDateString(activeCheckIn, 1),
-    });
-  }
-
-  return (
-    <View style={styles.stayDateCard}>
-      <Text style={styles.cardTitleSmall}>Stay dates</Text>
-      <View style={styles.twoCol}>
-        <View style={styles.dateInputColumn}>
-          <Field
-            label="Check in"
-            value={checkIn}
-            onChangeText={(check_in) => onChange({ check_in })}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </View>
-        <View style={styles.dateInputColumn}>
-          <Field
-            label="Check out"
-            value={checkOut}
-            onChangeText={(check_out) => onChange({ check_out })}
-            placeholder="YYYY-MM-DD"
-            keyboardType="numbers-and-punctuation"
-          />
-        </View>
-      </View>
-      {dateError ? (
-        <Text style={styles.error}>{dateError}</Text>
-      ) : nightCount !== null ? (
-        <Text style={styles.helperText}>
-          {nightCount} {nightCount === 1 ? "night" : "nights"} selected.
-        </Text>
-      ) : (
-        <Text style={styles.helperText}>Tip: use the quick buttons below instead of typing dates from scratch.</Text>
-      )}
-      <View style={styles.segmentWrap}>
-        <DateQuickButton
-          styles={styles}
-          label="Use trip dates"
-          disabled={!tripStartDate && !tripEndDate}
-          onPress={useTripDates}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="In = trip start"
-          disabled={!tripStartDate}
-          onPress={() => onChange({ check_in: tripStartDate })}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="Out = trip end"
-          disabled={!tripEndDate}
-          onPress={() => onChange({ check_out: tripEndDate })}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="1 night"
-          disabled={!activeCheckIn}
-          onPress={setOneNightStay}
-        />
-        <DateQuickButton
-          styles={styles}
-          label="Clear"
-          disabled={!hasDates}
-          onPress={() => onChange({ check_in: "", check_out: "" })}
-        />
-      </View>
-    </View>
-  );
-}
-
-function DateSelectorButton({
-  styles,
-  label,
-  value,
-  active,
-  disabled,
-  onPress,
-}: {
-  styles: AppStyles;
-  label: string;
-  value: string;
-  active?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={`${label} date`}
-      accessibilityState={{ selected: Boolean(active), disabled: Boolean(disabled) }}
-      disabled={disabled}
-      style={[styles.dateField, active && styles.dateFieldActive, disabled && styles.dateFieldDisabled]}
-      onPress={onPress}
-    >
-      <Text style={styles.label}>{label}</Text>
-      <Text style={[styles.dateFieldValue, !value && styles.dateFieldPlaceholder]}>
-        {value || "Select date"}
-      </Text>
-    </Pressable>
-  );
-}
-
-function InlineCalendarPicker({
-  styles,
-  label,
-  selectedDate,
-  cursor,
-  onChangeMonth,
-  onSelectDate,
-  onClearDate,
-  onClose,
-}: {
-  styles: AppStyles;
-  label: string;
-  selectedDate: string;
-  cursor: CalendarCursor;
-  onChangeMonth: (offset: number) => void;
-  onSelectDate: (value: string) => void;
-  onClearDate: () => void;
-  onClose: () => void;
-}) {
-  const weeks = buildCalendarWeeks(cursor);
-  const todayIso = getTodayIsoDate();
-
-  return (
-    <View style={styles.calendarCard}>
-      <View style={styles.calendarHeader}>
-        <View style={styles.rowCardText}>
-          <Text style={styles.cardTitleSmall}>{label}</Text>
-          <Text style={styles.cardMeta}>{selectedDate || "No date selected"}</Text>
-        </View>
-        <Pressable accessibilityRole="button" accessibilityLabel="Close calendar" style={styles.textButton} onPress={onClose}>
-          <Text style={styles.textButtonLabel}>Done</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.calendarMonthRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Show previous month" style={styles.calendarNavButton} onPress={() => onChangeMonth(-1)}>
-          <Text style={styles.calendarNavText}>Prev</Text>
-        </Pressable>
-        <Text style={styles.calendarMonthLabel}>{formatCalendarMonth(cursor)}</Text>
-        <Pressable accessibilityRole="button" accessibilityLabel="Show next month" style={styles.calendarNavButton} onPress={() => onChangeMonth(1)}>
-          <Text style={styles.calendarNavText}>Next</Text>
-        </Pressable>
-      </View>
-
-      <View style={styles.calendarWeekdaysRow}>
-        {calendarWeekdayLabels.map((weekday) => (
-          <Text key={weekday} style={styles.calendarWeekdayLabel}>
-            {weekday}
-          </Text>
-        ))}
-      </View>
-
-      {weeks.map((week, index) => (
-        <View key={`calendar-week-${index}`} style={styles.calendarDaysRow}>
-          {week.map((day) => {
-            const selected = day.iso === selectedDate;
-            const today = day.iso === todayIso;
-            return (
-              <Pressable
-                accessibilityRole="button"
-                accessibilityLabel={`Choose ${day.iso}`}
-                key={day.iso}
-                style={[
-                  styles.calendarDayButton,
-                  !day.inMonth && styles.calendarDayButtonMuted,
-                  today && styles.calendarDayButtonToday,
-                  selected && styles.calendarDayButtonSelected,
-                ]}
-                onPress={() => onSelectDate(day.iso)}
-              >
-                <Text
-                  style={[
-                    styles.calendarDayText,
-                    !day.inMonth && styles.calendarDayTextMuted,
-                    selected && styles.calendarDayTextSelected,
-                  ]}
-                >
-                  {day.day}
-                </Text>
-              </Pressable>
-            );
-          })}
-        </View>
-      ))}
-
-      <View style={styles.actionRow}>
-        <Pressable accessibilityRole="button" accessibilityLabel="Use today for this date" style={styles.actionMiniButton} onPress={() => onSelectDate(todayIso)}>
-          <Text style={styles.actionMiniText}>Today</Text>
-        </Pressable>
-        <Pressable
-          accessibilityRole="button"
-          accessibilityLabel="Clear selected date"
-          accessibilityState={{ disabled: !selectedDate }}
-          disabled={!selectedDate}
-          style={[styles.actionMiniButton, !selectedDate && styles.disabled]}
-          onPress={onClearDate}
-        >
-          <Text style={styles.actionMiniText}>Clear</Text>
-        </Pressable>
-      </View>
-    </View>
-  );
-}
-
-function DateQuickButton({
-  styles,
-  label,
-  active,
-  disabled,
-  onPress,
-}: {
-  styles: AppStyles;
-  label: string;
-  active?: boolean;
-  disabled?: boolean;
-  onPress: () => void;
-}) {
-  return (
-    <Pressable
-      accessibilityRole="button"
-      accessibilityLabel={label}
-      accessibilityState={{ disabled: Boolean(disabled) }}
-      disabled={disabled}
-      style={[styles.filterChip, active && styles.filterChipActive, disabled && styles.disabled]}
-      onPress={onPress}
-    >
-      <Text style={[styles.filterChipText, active && styles.filterChipTextActive]}>{label}</Text>
-    </Pressable>
-  );
-}
-
-type CalendarCursor = {
-  year: number;
-  month: number;
-};
-
-type CalendarDay = {
-  iso: string;
-  day: number;
-  inMonth: boolean;
-};
-
-function buildCalendarWeeks(cursor: CalendarCursor) {
-  const firstDayOfMonth = new Date(cursor.year, cursor.month, 1).getDay();
-  const daysInMonth = new Date(cursor.year, cursor.month + 1, 0).getDate();
-  const daysInPreviousMonth = new Date(cursor.year, cursor.month, 0).getDate();
-  const weeks: CalendarDay[][] = [];
-
-  for (let weekIndex = 0; weekIndex < 6; weekIndex += 1) {
-    const week: CalendarDay[] = [];
-
-    for (let weekdayIndex = 0; weekdayIndex < 7; weekdayIndex += 1) {
-      const cellIndex = weekIndex * 7 + weekdayIndex;
-      const dayOfMonth = cellIndex - firstDayOfMonth + 1;
-
-      if (dayOfMonth < 1) {
-        const previous = normalizeCalendarCursor(cursor.year, cursor.month - 1);
-        week.push({
-          iso: formatIsoDate(previous.year, previous.month + 1, daysInPreviousMonth + dayOfMonth),
-          day: daysInPreviousMonth + dayOfMonth,
-          inMonth: false,
-        });
-        continue;
-      }
-
-      if (dayOfMonth > daysInMonth) {
-        const next = normalizeCalendarCursor(cursor.year, cursor.month + 1);
-        week.push({
-          iso: formatIsoDate(next.year, next.month + 1, dayOfMonth - daysInMonth),
-          day: dayOfMonth - daysInMonth,
-          inMonth: false,
-        });
-        continue;
-      }
-
-      week.push({
-        iso: formatIsoDate(cursor.year, cursor.month + 1, dayOfMonth),
-        day: dayOfMonth,
-        inMonth: true,
-      });
-    }
-
-    weeks.push(week);
-  }
-
-  return weeks;
-}
-
-function formatCalendarMonth(cursor: CalendarCursor) {
-  return new Date(cursor.year, cursor.month, 1).toLocaleDateString(undefined, {
-    month: "long",
-    year: "numeric",
-  });
-}
-
-function shiftCalendarCursor(cursor: CalendarCursor, offset: number) {
-  return normalizeCalendarCursor(cursor.year, cursor.month + offset);
-}
-
-function getCalendarCursor(value: string) {
-  if (!isIsoDateString(value)) {
-    const today = new Date();
-    return { year: today.getFullYear(), month: today.getMonth() };
-  }
-
-  const [yearText, monthText] = value.split("-");
-  return {
-    year: Number(yearText),
-    month: Number(monthText) - 1,
-  };
-}
-
-function normalizeCalendarCursor(year: number, month: number) {
-  const normalized = new Date(year, month, 1);
-  return {
-    year: normalized.getFullYear(),
-    month: normalized.getMonth(),
-  };
-}
-
-function getTodayIsoDate() {
-  const today = new Date();
-  return formatIsoDate(today.getFullYear(), today.getMonth() + 1, today.getDate());
-}
-
-function formatIsoDate(year: number, month: number, day: number) {
-  return `${year}-${String(month).padStart(2, "0")}-${String(day).padStart(2, "0")}`;
 }

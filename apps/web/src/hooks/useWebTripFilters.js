@@ -25,7 +25,8 @@ export function useWebTripFilters({
   }, [peopleProfiles, trips]);
 
   const filteredTrips = useMemo(() => {
-    let list = trips;
+    const search = query.trim().toLowerCase();
+    let list = search ? trips.filter((trip) => [trip.title, trip.notes, ...(trip.people || []), ...(trip.route || []).map((stop) => stop.label)].filter(Boolean).join(" ").toLowerCase().includes(search)) : trips;
     if (selectedTripKindFilter !== "all") {
       list = list.filter((trip) => normalizeTripKind(trip.trip_kind) === selectedTripKindFilter);
     }
@@ -35,7 +36,7 @@ export function useWebTripFilters({
       const tripPeopleSet = new Set((trip.people || []).map(normalizePersonName));
       return [...selectedSet].every((selectedName) => tripPeopleSet.has(selectedName));
     });
-  }, [trips, selectedPeopleFilters, selectedTripKindFilter, normalizePersonName, normalizeTripKind]);
+  }, [trips, query, selectedPeopleFilters, selectedTripKindFilter, normalizePersonName, normalizeTripKind]);
 
   const displayedTrips = useMemo(() => sortTrips(filteredTrips, sortBy), [filteredTrips, sortBy, sortTrips]);
 

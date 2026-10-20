@@ -3,7 +3,7 @@ import { filterTripPickerOptions, tripPickerDateLabel } from "../../tripPicker";
 
 function trip(id: number, title = `Trip ${id}`, start = "2026-05-01"): Trip {
   return {
-    id, title, start_date: start, end_date: start, trip_kind: "past",
+    id, version: 1, title, start_date: start, end_date: start, trip_kind: "past",
     notes: "", route: [], people: [], accommodations: [], itinerary: [],
     created_at: "2026-01-01T00:00:00Z", updated_at: "2026-01-01T00:00:00Z",
   };

@@ -1,7 +1,8 @@
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   ActivityIndicator,
   Alert,
+  Image,
   Pressable,
   RefreshControl,
   ScrollView,
@@ -13,14 +14,13 @@ import {
 import { StatusBar } from "expo-status-bar";
 import { SafeAreaProvider, SafeAreaView } from "react-native-safe-area-context";
 import {
-  API_BASE,
   createPackingTemplate,
   createPeopleProfile,
-  createTrip,
   deletePackingTemplate,
   deletePeopleProfile,
   deleteTrip,
   fetchMe,
+  fetchTrip,
   login,
   logout,
   register,
@@ -30,8 +30,6 @@ import {
   updateMyProfile,
   updatePackingTemplate,
   updatePeopleProfile,
-  updateTrip,
-  type PlaceSuggestion,
   type Trip,
 } from "./api";
 import {
@@ -50,22 +48,20 @@ import { useMapSelection } from "./hooks/useMapSelection";
 import { usePacking } from "./hooks/usePacking";
 import { useTripFilters } from "./hooks/useTripFilters";
 import { useTrips } from "./hooks/useTrips";
+import { useTripActions } from "./hooks/useTripActions";
 import { useTripWorkflow } from "./hooks/useTripWorkflow";
-import { getOrderedRoutePoints } from "./mapLayers";
 import { messageFromError } from "./messageFromError";
 import MapScreen from "./screens/MapScreen";
 import ProfileScreen from "./screens/ProfileScreen";
 import TripsScreen from "./screens/TripsScreen";
 import type { FieldProps } from "./screenTypes";
+import { plannerColors as colors } from "./plannerTheme";
 import {
-  buildTripPayload,
   formatDateRange,
-  hasTripValidationErrors,
   isInvalidDateRange,
   isValidEmail,
   normalizeText,
   parseItems,
-  validateTripDraft,
 } from "./utils";
 
 export default function App() {
@@ -94,7 +90,19 @@ export default function App() {
     setResetCodeSent,
   } = useAuthSession();
 
+  const tripsScrollRef = useRef<ScrollView>(null);
+  const tripScrollPositions = useRef<Record<string, number>>({});
+  const tripsViewRef = useRef("list");
+  const onTripsViewChange = useCallback((view: string) => {
+    if (tripsViewRef.current === view) return;
+    tripsViewRef.current = view;
+    requestAnimationFrame(() => tripsScrollRef.current?.scrollTo({ y: tripScrollPositions.current[view] || 0, animated: false }));
+  }, []);
+  const [savedStopTripId, setSavedStopTripId] = useState<number | null>(null);
   const [activeTab, setActiveTab] = useState<Tab>("trips");
+  useEffect(() => {
+    if (activeTab === "trips") requestAnimationFrame(() => tripsScrollRef.current?.scrollTo({ y: tripScrollPositions.current[tripsViewRef.current] || 0, animated: false }));
+  }, [activeTab]);
   const [tripDetailsRequestId, setTripDetailsRequestId] = useState<number | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -128,6 +136,14 @@ export default function App() {
     selectOnlyTrip,
   } = useMapSelection(trips);
   const mapTrips = selectedTripIds.length ? selectedTrips : displayedTrips;
+  const mapFocusedTrip = selectedTrip && mapTrips.some((trip) => trip.id === selectedTrip.id) ? selectedTrip : null;
+
+  useEffect(() => {
+    if (activeTab === "map" && selectedTripId !== null && !mapFocusedTrip) {
+      setSelectedTripId(null);
+      setSelectedStopLabel("");
+    }
+  }, [activeTab, selectedTripId, mapFocusedTrip, setSelectedTripId, setSelectedStopLabel]);
 
   const {
     tripDraft,
@@ -369,114 +385,25 @@ export default function App() {
     setActiveTab("map");
   }
 
-  async function handleSaveTrip() {
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const validation = validateTripDraft(tripDraft);
-      setTripFormValidation(validation);
-      if (hasTripValidationErrors(validation)) {
-        throw new Error("Please fix the highlighted trip form errors before saving.");
-      }
-      if (isInvalidDateRange(tripDraft.start_date, tripDraft.end_date)) {
-        throw new Error("Trip end date cannot be before start date.");
-      }
-      const payload = buildTripPayload(tripDraft);
-      let savedTrip: Trip;
-      if (tripEditingId) {
-        savedTrip = await updateTrip(tripEditingId, payload);
-        setNotice("Trip updated.");
-      } else {
-        savedTrip = await createTrip(payload);
-        setNotice("Trip created.");
-      }
-      resetTripEditor();
-      await loadAll({ surfacePartialErrors: true });
-      selectOnlyTrip(savedTrip.id);
-      return true;
-    } catch (e) {
-      setError(messageFromError(e));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function handleQuickAddStop({
-    tripId,
-    place,
-    label,
-    notes,
-  }: {
-    tripId: number;
-    place: PlaceSuggestion;
-    label: string;
-    notes: string;
-  }) {
-    const trip = trips.find((item) => item.id === tripId);
-    if (!trip) {
-      setError("Choose an existing trip before saving a quick stop.");
-      return false;
-    }
-
-    const lat = Number(place.lat);
-    const lng = Number(place.lon);
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
-      setError("This place is missing usable map coordinates.");
-      return false;
-    }
-
-    setBusy(true);
-    setError(null);
-    setNotice(null);
-    try {
-      const route = getOrderedRoutePoints(trip.route);
-      const cleanLabel = label.trim() || place.display_name.split(",")[0].trim() || "Quick stop";
-      const today = getTodayIsoDate();
-      const now = getCurrentTimeText();
-      const noteText = notes.trim();
-      const nextTrip = await updateTrip(trip.id, {
-        title: trip.title,
-        trip_kind: trip.trip_kind,
-        start_date: trip.start_date || null,
-        end_date: trip.end_date || null,
-        notes: trip.notes || "",
-        route: [
-          ...route,
-          {
-            lat,
-            lng,
-            label: cleanLabel,
-            order: route.length,
-          },
-        ],
-        people: trip.people,
-        accommodations: trip.accommodations,
-        itinerary: noteText
-          ? [
-              ...trip.itinerary,
-              {
-                date: today,
-                time: now,
-                activity: cleanLabel,
-                location: place.display_name,
-                notes: noteText,
-              },
-            ]
-          : trip.itinerary,
-      });
-      await loadAll({ surfacePartialErrors: true });
-      selectOnlyTrip(nextTrip.id);
-      setNotice("Quick stop saved.");
-      return true;
-    } catch (e) {
-      setError(messageFromError(e));
-      return false;
-    } finally {
-      setBusy(false);
-    }
-  }
+  const { handleSaveTrip, handleQuickAddStop } = useTripActions({
+    draft: tripDraft, editingId: tripEditingId, setValidation: setTripFormValidation, resetEditor: resetTripEditor,
+    onSaved: (trip) => {
+      setTrips((current) => [trip, ...current.filter((item) => item.id !== trip.id)]);
+      selectOnlyTrip(trip.id);
+    },
+    onStopSaved: (trip) => setSavedStopTripId(trip.id),
+    onError: (error) => setError(error ? messageFromError(error) : null),
+    onNotice: setNotice, onBusy: setBusy,
+    onConflict: (id) => Alert.alert("Trip changed", "Your draft is kept. Review the latest trip before replacing your draft or applying your changes again.", [
+      { text: "Keep draft", style: "cancel" },
+      { text: "Review latest", onPress: () => {
+        void fetchTrip(id).then((latest) => {
+          setTrips((current) => current.map((trip) => trip.id === latest.id ? latest : trip));
+          setTripDetailsRequestId(latest.id);
+        }).catch((error) => setError(messageFromError(error)));
+      } },
+    ]),
+  });
 
   async function confirmDeleteTrip(id: number) {
     Alert.alert("Delete trip?", "This removes the trip from the shared database.", [
@@ -582,10 +509,11 @@ export default function App() {
           <StatusBar style="dark" />
           <ScrollView contentContainerStyle={styles.authContent} keyboardShouldPersistTaps="handled">
             <Text style={styles.brand}>Family Travel Log</Text>
+            <Image source={require("./assets/planner-cover.jpg")} style={styles.authArtwork} accessible={false} />
             <Text style={styles.authTitle}>
               {showReset ? "Reset password" : authMode === "login" ? "Welcome back" : "Create account"}
             </Text>
-            <Text style={styles.meta}>API: {API_BASE}</Text>
+            <Text style={styles.helperText}>Your places, people, and plans. All together.</Text>
             {error ? <Text style={styles.error}>{error}</Text> : null}
             {notice ? <Text style={styles.notice}>{notice}</Text> : null}
 
@@ -706,55 +634,30 @@ export default function App() {
 
   return (
     <SafeAreaProvider>
-      <SafeAreaView style={styles.screen} edges={activeTab === "map" ? ["top", "left", "right"] : undefined}>
+      <SafeAreaView style={styles.screen} edges={["top", "left", "right", "bottom"]}>
         <StatusBar style="dark" />
         <View style={styles.header}>
           <View>
             <Text style={styles.brandSmall}>Family Travel Log</Text>
-            <Text style={styles.meta}>Signed in as {sessionUser}</Text>
-          </View>
-          <View style={styles.headerActions}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel="Open Family Hub"
-              accessibilityState={{ selected: activeTab === "hub" }}
-              style={[styles.textButton, activeTab === "hub" && styles.headerButtonActive]}
-              onPress={() => setActiveTab("hub")}
-            >
-              <Text style={styles.textButtonLabel}>Family Hub</Text>
-            </Pressable>
-            <Pressable accessibilityRole="button" accessibilityLabel="Logout" style={styles.textButton} onPress={handleLogout}>
-              <Text style={styles.textButtonLabel}>Logout</Text>
-            </Pressable>
+            <Text style={styles.meta}>Your family workspace</Text>
           </View>
         </View>
 
         {error ? <Text style={styles.inlineError}>{error}</Text> : null}
-        {notice ? <Text style={styles.inlineNotice}>{notice}</Text> : null}
+        {notice ? <View><Text style={styles.inlineNotice} accessibilityLiveRegion="polite">{notice}</Text>
+          {savedStopTripId && notice.startsWith("Stop added to") ? <Pressable accessibilityRole="button" onPress={() => { setTripDetailsRequestId(savedStopTripId); setActiveTab("trips"); }}><Text style={styles.linkText}>View trip</Text></Pressable> : null}
+        </View> : null}
 
-        <View style={styles.tabs}>
-          <TabButton
-            label="Trips"
-            active={activeTab === "trips"}
-            onPress={() => setActiveTab("trips")}
-          />
-          <TabButton
-            label="Map"
-            active={activeTab === "map"}
-            onPress={() => setActiveTab("map")}
-          />
-        </View>
-
-        {activeTab === "map" ? (
-          <View style={styles.content}>
+        <View style={[styles.content, activeTab !== "map" && styles.hidden]}>
             {busy ? <ActivityIndicator style={styles.loader} /> : null}
             <MapScreen
               styles={styles}
               trips={mapTrips}
               selectedTripCount={selectedTripIds.length}
-              selectedTrip={selectedTrip}
-              selectedTripId={selectedTripId}
+              selectedTrip={mapFocusedTrip}
+              selectedTripId={mapFocusedTrip?.id ?? null}
               selectedStopLabel={selectedStopLabel}
+              onBackToTrips={() => setActiveTab("trips")}
               tripFilterKind={tripFilterKind}
               setTripFilterKind={setTripFilterKind}
               onSelectTrip={(tripId, stopLabel) => {
@@ -768,25 +671,19 @@ export default function App() {
               }}
             />
           </View>
-        ) : (
           <ScrollView
-            style={styles.content}
+            ref={tripsScrollRef}
+            onScroll={(event) => { if (activeTab === "trips") tripScrollPositions.current[tripsViewRef.current] = event.nativeEvent.contentOffset.y; }}
+            scrollEventThrottle={100}
+            style={[styles.content, activeTab !== "trips" && styles.hidden]}
             contentContainerStyle={styles.contentInner}
             refreshControl={<RefreshControl refreshing={refreshing} onRefresh={refresh} />}
             keyboardShouldPersistTaps="handled"
           >
             {busy ? <ActivityIndicator style={styles.loader} /> : null}
 
-            {activeTab === "trips" ? (
-              <View style={styles.summaryBar}>
-                <Text style={styles.summaryText}>
-                  Trips {trips.length} | Wishlist {upcomingTrips} | People {people.length} | Packing {packingTemplates.length}
-                </Text>
-              </View>
-            ) : null}
-
-            {activeTab === "trips" ? (
               <TripsScreen
+                onViewChange={onTripsViewChange}
                 styles={styles}
                 Field={Field}
                 SegmentButton={SegmentButton}
@@ -830,11 +727,11 @@ export default function App() {
                 detailsTripId={tripDetailsRequestId}
                 onDetailsTripOpened={() => setTripDetailsRequestId(null)}
               />
-            ) : null}
-
-            {activeTab === "hub" ? (
+          </ScrollView>
+          <ScrollView style={[styles.content, activeTab !== "hub" && styles.hidden]} contentContainerStyle={styles.contentInner} keyboardShouldPersistTaps="handled">
               <ProfileScreen
                 styles={styles}
+                onLogout={handleLogout}
                 Field={Field}
                 sessionUser={sessionUser}
                 profileEmail={profileEmail}
@@ -898,18 +795,12 @@ export default function App() {
                   messageFromError,
                 }}
               />
-            ) : null}
-
-          {activeTab === "trips" && selectedTrip && !selectedTripIds.length ? (
-            <View style={styles.mapDetailCard}>
-              <Text style={styles.formTitle}>Selected Trip</Text>
-              <Text style={styles.cardTitle}>{selectedTrip.title}</Text>
-              <Text style={styles.cardMeta}>{formatDateRange(selectedTrip.start_date, selectedTrip.end_date)}</Text>
-              {selectedStopLabel ? <Text style={styles.cardText}>Focused stop: {selectedStopLabel}</Text> : null}
-            </View>
-          ) : null}
           </ScrollView>
-        )}
+          <View style={styles.tabs}>
+            <TabButton label="Trips" active={activeTab === "trips"} onPress={() => setActiveTab("trips")} />
+            <TabButton label="Map" active={activeTab === "map"} onPress={() => setActiveTab("map")} />
+            <TabButton label="Family" active={activeTab === "hub"} onPress={() => setActiveTab("hub")} />
+          </View>
       </SafeAreaView>
     </SafeAreaProvider>
   );
@@ -941,7 +832,7 @@ function Field({
 }
 
 function TabButton({ label, active, onPress }: { label: string; active: boolean; onPress: () => void }) {
-  const icon = label === "Trips" ? "☰" : "⌖";
+  const icon = label === "Trips" ? "☰" : label === "Map" ? "⌖" : "♧";
   return (
     <Pressable
       accessibilityRole="tab"
@@ -950,7 +841,8 @@ function TabButton({ label, active, onPress }: { label: string; active: boolean;
       style={[styles.tabButton, active && styles.tabButtonActive]}
       onPress={onPress}
     >
-      <Text style={[styles.tabButtonIcon, active && styles.tabButtonTextActive]}>{icon}</Text>
+      <Text accessibilityElementsHidden style={[styles.tabButtonIcon, active && styles.tabButtonTextActive]}>{icon}</Text>
+      <Text style={[styles.tabButtonText, active && styles.tabButtonTextActive]}>{label}</Text>
     </Pressable>
   );
 }
@@ -978,84 +870,88 @@ function Stat({ label, value }: { label: string; value: string }) {
   );
 }
 
-function getTodayIsoDate() {
-  const today = new Date();
-  return `${today.getFullYear()}-${String(today.getMonth() + 1).padStart(2, "0")}-${String(today.getDate()).padStart(2, "0")}`;
-}
-
-function getCurrentTimeText() {
-  const now = new Date();
-  return `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
-}
-
 const styles = StyleSheet.create({
-  screen: { flex: 1, backgroundColor: "#FDFCF7" },
-  authContent: { padding: 18, gap: 12 },
-  brand: { marginTop: 24, fontSize: 34, fontWeight: "700", color: "#24323D" },
-  brandSmall: { fontSize: 20, fontWeight: "700", color: "#24323D" },
-  authTitle: { fontSize: 22, fontWeight: "700", color: "#24323D" },
-  meta: { color: "#64748B", fontSize: 12 },
-  header: { paddingHorizontal: 14, paddingTop: 8, paddingBottom: 6, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
+  authArtwork: { width: "100%", aspectRatio: 2.2, borderRadius: 12, marginVertical: 8 },
+  hidden: { display: "none" },
+  plannerEyebrow: { color: colors.muted, fontSize: 10, letterSpacing: 1.3, fontWeight: "700", marginTop: 8 },
+  plannerStats: { flexDirection: "row", gap: 10, marginBottom: 8 },
+  plannerStat: { flex: 1, minWidth: 0, borderRadius: 10, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, padding: 14, gap: 4 },
+  plannerStatValue: { fontSize: 26, fontWeight: "600", color: colors.ink },
+  plannerDetailTabs: { flexDirection: "row", gap: 18, borderBottomWidth: 1, borderBottomColor: colors.line },
+  plannerDetailTab: { minHeight: 48, paddingHorizontal: 6, justifyContent: "center", borderBottomWidth: 2, borderBottomColor: "transparent" },
+  plannerDetailTabActive: { borderBottomColor: colors.accent },
+  plannerDetailTabText: { color: colors.muted, fontSize: 14, fontWeight: "600" },
+  plannerDetailTabTextActive: { color: colors.accent },
+  screen: { flex: 1, backgroundColor: colors.background },
+  authContent: { padding: 24, paddingBottom: 40, gap: 16 },
+  brand: { marginTop: 28, fontSize: 32, fontWeight: "700", color: colors.ink, letterSpacing: -1 },
+  brandSmall: { fontSize: 21, fontWeight: "700", color: colors.ink, letterSpacing: -0.6 },
+  authTitle: { fontSize: 25, fontWeight: "600", color: colors.ink },
+  meta: { color: colors.muted, fontSize: 12 },
+  header: { paddingHorizontal: 20, paddingTop: 12, paddingBottom: 14, borderBottomColor: colors.line, borderBottomWidth: 1, backgroundColor: colors.surface, flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
   headerActions: { flexDirection: "row", alignItems: "center", gap: 4 },
-  headerButtonActive: { backgroundColor: "#EAF7F1", borderRadius: 8 },
-  summaryBar: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: "#EAF7F1", borderColor: "#BDEBDB", borderWidth: 1 },
-  summaryText: { color: "#24323D", fontWeight: "600", fontSize: 12 },
+  headerButtonActive: { backgroundColor: colors.soft, borderRadius: 8 },
+  summaryBar: { paddingHorizontal: 10, paddingVertical: 6, borderRadius: 8, backgroundColor: colors.soft, borderColor: colors.line, borderWidth: 1 },
+  summaryText: { color: colors.ink, fontWeight: "600", fontSize: 12 },
   statsRow: { flexDirection: "row", gap: 8, paddingHorizontal: 16 },
-  stat: { flex: 1, backgroundColor: "#EAF7F1", borderColor: "#BDEBDB", borderWidth: 1, borderRadius: 8, padding: 12 },
-  statValue: { fontSize: 20, fontWeight: "800", color: "#3A86FF" },
-  statLabel: { color: "#64748B", marginTop: 2 },
-  tabs: { flexDirection: "row", justifyContent: "center", paddingHorizontal: 14, paddingTop: 4, paddingBottom: 4, gap: 8 },
-  tabButton: { width: 68, minHeight: 38, borderRadius: 999, borderColor: "#CFE4FF", borderWidth: 1, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" },
-  tabButtonActive: { backgroundColor: "#3A86FF", borderColor: "#3A86FF" },
-  tabButtonText: { color: "#24323D", fontWeight: "600" },
-  tabButtonIcon: { color: "#24323D", fontSize: 20, fontWeight: "700", lineHeight: 22 },
-  tabButtonTextActive: { color: "#FFFFFF" },
+  stat: { flex: 1, backgroundColor: colors.soft, borderColor: colors.line, borderWidth: 1, borderRadius: 8, padding: 12 },
+  statValue: { fontSize: 20, fontWeight: "800", color: colors.accent },
+  statLabel: { color: colors.muted, marginTop: 2 },
+  tabs: { flexDirection: "row", justifyContent: "center", paddingHorizontal: 16, paddingTop: 8, paddingBottom: 6, gap: 10, borderTopWidth: 1, borderTopColor: colors.line, backgroundColor: colors.surface },
+  tabButton: { flex: 1, minHeight: 56, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "transparent", gap: 3 },
+  tabButtonActive: { backgroundColor: colors.accentSoft },
+  tabButtonText: { color: colors.ink, fontWeight: "600" },
+  tabButtonIcon: { color: colors.ink, fontSize: 20, fontWeight: "700", lineHeight: 22 },
+  tabButtonTextActive: { color: colors.accent },
   content: { flex: 1 },
-  contentInner: { padding: 12, paddingBottom: 32, gap: 10 },
-  panel: { gap: 10 },
-  mapScreen: { flex: 1, backgroundColor: "#EAF7F1", overflow: "hidden" },
-  mapBaseLayer: { position: "absolute", top: 0, right: 0, bottom: 0, left: 0 },
-  mapTopOverlay: { position: "absolute", top: 10, right: 10, left: 10, zIndex: 5, gap: 6 },
-  mapModeRow: { flexDirection: "row", gap: 6, alignItems: "center", alignSelf: "flex-start" },
-  mapModeChip: { minHeight: 34, borderWidth: 1, borderColor: "#CFE4FF", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: "rgba(255,255,255,0.96)", alignItems: "center", justifyContent: "center" },
-  mapModeChipActive: { backgroundColor: "#24323D", borderColor: "#24323D" },
-  mapModeChipText: { color: "#24323D", fontWeight: "800", fontSize: 12 },
-  mapModeChipTextActive: { color: "#FFFFFF" },
+  contentInner: { padding: 18, paddingBottom: 36, gap: 16 },
+  panel: { gap: 16 },
+  mapScreen: { flex: 1, backgroundColor: colors.soft, overflow: "hidden" },
+  mapCanvas: { flex: 1, minHeight: 0, overflow: "hidden" },
+  mapBaseLayer: { flex: 1 },
+  mapControls: { padding: 10, gap: 6, backgroundColor: colors.soft },
+  mapModeRow: { flexDirection: "row", flexWrap: "wrap", gap: 6, alignItems: "center", alignSelf: "flex-start" },
+  mapEmptyScroll: { flex: 1 },
+  mapEmptyContent: { flexGrow: 1, justifyContent: "center", padding: 16 },
+  mapModeChip: { minHeight: 34, borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 5, backgroundColor: "rgba(255,255,255,0.96)", alignItems: "center", justifyContent: "center" },
+  mapModeChipActive: { backgroundColor: colors.ink, borderColor: colors.ink },
+  mapModeChipText: { color: colors.ink, fontWeight: "800", fontSize: 12 },
+  mapModeChipTextActive: { color: colors.surface },
   mapStatusRow: { flexDirection: "row", alignItems: "center" },
-  mapStatusPill: { overflow: "hidden", minHeight: 34, borderRadius: 999, borderColor: "#CFE4FF", borderWidth: 1, backgroundColor: "rgba(255,255,255,0.96)", color: "#24323D", fontSize: 12, fontWeight: "700", paddingHorizontal: 12, paddingVertical: 7 },
+  mapStatusPill: { overflow: "hidden", minHeight: 34, borderRadius: 999, borderColor: colors.line, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.96)", color: colors.ink, fontSize: 12, fontWeight: "700", paddingHorizontal: 12, paddingVertical: 7 },
   mapFilterRow: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
-  mapFilterChip: { minHeight: 34, borderWidth: 1, borderColor: "#CFE4FF", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "rgba(255,255,255,0.96)", alignItems: "center", justifyContent: "center" },
-  mapFilterChipActive: { backgroundColor: "#3A86FF", borderColor: "#3A86FF" },
-  mapFilterChipText: { color: "#24323D", fontWeight: "600", fontSize: 12 },
-  mapFilterChipTextActive: { color: "#FFFFFF" },
+  mapFilterChip: { minHeight: 34, borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 5, backgroundColor: "rgba(255,255,255,0.96)", alignItems: "center", justifyContent: "center" },
+  mapFilterChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  mapFilterChipText: { color: colors.ink, fontWeight: "600", fontSize: 12 },
+  mapFilterChipTextActive: { color: colors.surface },
   mapBottomOverlay: { position: "absolute", right: 10, bottom: 12, left: 10, zIndex: 6 },
-  mapBottomSheet: { borderTopLeftRadius: 8, borderTopRightRadius: 8, borderBottomLeftRadius: 8, borderBottomRightRadius: 8, borderColor: "#D8EAFE", borderWidth: 1, backgroundColor: "rgba(255,255,255,0.98)", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, gap: 8, overflow: "hidden" },
-  mapSheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: "#CBD5E1", alignSelf: "center" },
+  mapBottomSheet: { borderTopLeftRadius: 8, borderTopRightRadius: 8, borderBottomLeftRadius: 8, borderBottomRightRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: "rgba(255,255,255,0.98)", paddingHorizontal: 12, paddingTop: 8, paddingBottom: 12, gap: 8, overflow: "hidden" },
+  mapSheetHandle: { width: 42, height: 4, borderRadius: 2, backgroundColor: colors.line, alignSelf: "center" },
   mapSheetHeader: { minHeight: 70, justifyContent: "center", gap: 8 },
-  mapSheetTitle: { color: "#24323D", fontSize: 17, fontWeight: "700" },
-  mapSheetMeta: { color: "#64748B", fontSize: 12, fontWeight: "500", marginTop: 2 },
-  mapSheetToggleText: { color: "#3A86FF", fontWeight: "700", paddingLeft: 10 },
+  mapSheetTitle: { color: colors.ink, fontSize: 17, fontWeight: "700" },
+  mapSheetMeta: { color: colors.muted, fontSize: 12, fontWeight: "500", marginTop: 2 },
+  mapSheetToggleText: { color: colors.accent, fontWeight: "700", paddingLeft: 10 },
   mapSheetBody: { gap: 6 },
   mapSheetPager: { flexDirection: "row", alignItems: "center", gap: 6 },
-  mapSheetPagerText: { flex: 1, color: "#64748B", fontSize: 12, fontWeight: "700", textAlign: "center" },
-  mapSheetAction: { minHeight: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#EAF7F1", borderColor: "#3A86FF", borderWidth: 1, paddingHorizontal: 12 },
-  mapSheetActionText: { color: "#3A86FF", fontWeight: "700" },
+  mapSheetPagerText: { flex: 1, color: colors.muted, fontSize: 12, fontWeight: "700", textAlign: "center" },
+  mapSheetAction: { minHeight: 42, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.soft, borderColor: colors.accent, borderWidth: 1, paddingHorizontal: 12 },
+  mapSheetActionText: { color: colors.accent, fontWeight: "700" },
   mapScreenHeader: { gap: 8 },
   mapAlwaysOn: { paddingHorizontal: 16, paddingTop: 12 },
   mapPanel: { gap: 8 },
   mapPanelFull: { flex: 1 },
   mapPanelImmersive: { gap: 0 },
   mapPanelHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  mapTitle: { fontSize: 18, fontWeight: "700", color: "#24323D" },
-  mapCount: { color: "#64748B", fontWeight: "500" },
-  mapHint: { color: "#7A7165", fontSize: 12, fontWeight: "700" },
+  mapTitle: { fontSize: 18, fontWeight: "700", color: colors.ink },
+  mapCount: { color: colors.muted, fontWeight: "500" },
+  mapHint: { color: colors.muted, fontSize: 12, fontWeight: "700" },
   mapLayerRow: { flexDirection: "row", flexWrap: "wrap", gap: 8, alignItems: "center" },
-  mapLayerChip: { minHeight: 44, borderWidth: 1, borderColor: "#CFE4FF", borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  mapLayerChipActive: { borderColor: "#3A86FF", backgroundColor: "#3A86FF" },
-  mapLayerChipText: { color: "#24323D", fontWeight: "600" },
+  mapLayerChip: { minHeight: 44, borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 12, paddingVertical: 7, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  mapLayerChipActive: { borderColor: colors.accent, backgroundColor: colors.accent },
+  mapLayerChipText: { color: colors.ink, fontWeight: "600" },
   mapLayerChipTextActive: { color: "#fff" },
-  mapPerfHint: { color: "#64748B", fontWeight: "600", fontSize: 12 },
-  mapShell: { height: 300, overflow: "hidden", borderRadius: 12, borderColor: "#CFE4FF", borderWidth: 1, backgroundColor: "#EAF7F1" },
+  mapPerfHint: { color: colors.muted, fontWeight: "600", fontSize: 12 },
+  mapShell: { height: 300, overflow: "hidden", borderRadius: 12, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.soft },
   mapShellCompact: { height: 210 },
   mapShellFull: { flex: 1, minHeight: 360 },
   mapShellImmersive: { height: "100%", minHeight: 0, borderRadius: 0, borderWidth: 0 },
@@ -1064,7 +960,7 @@ const styles = StyleSheet.create({
     minWidth: 34,
     minHeight: 34,
     borderRadius: 17,
-    backgroundColor: "#3A86FF",
+    backgroundColor: colors.accent,
     alignItems: "center",
     justifyContent: "center",
     borderColor: "#fff",
@@ -1072,124 +968,124 @@ const styles = StyleSheet.create({
     paddingHorizontal: 8,
   },
   clusterBubbleText: { color: "#fff", fontWeight: "800", fontSize: 12 },
-  mapDotMarker: { width: 14, height: 14, borderRadius: 7, backgroundColor: "#3A86FF", borderColor: "#FFFFFF", borderWidth: 2 },
-  mapDotMarkerWishlist: { backgroundColor: "#FFBE0B" },
+  mapDotMarker: { width: 14, height: 14, borderRadius: 7, backgroundColor: colors.accent, borderColor: colors.surface, borderWidth: 2 },
+  mapDotMarkerWishlist: { backgroundColor: colors.accentSoft },
   mapDotMarkerSelected: { width: 18, height: 18, borderRadius: 9, backgroundColor: "#FF6B6B", borderWidth: 3 },
   sectionHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 10 },
-  sectionTitle: { fontSize: 22, fontWeight: "700", color: "#24323D" },
-  formBlock: { backgroundColor: "#FFFFFF", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, padding: 10, gap: 8 },
-  formTitle: { fontSize: 16, fontWeight: "700", color: "#24323D" },
-  filterSummaryLine: { color: "#64748B", fontSize: 12, fontWeight: "500", marginTop: -4 },
+  sectionTitle: { fontSize: 25, fontWeight: "700", letterSpacing: -0.5, color: colors.ink },
+  formBlock: { backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 10, padding: 16, gap: 12 },
+  formTitle: { fontSize: 17, fontWeight: "600", color: colors.ink },
+  filterSummaryLine: { color: colors.muted, fontSize: 12, fontWeight: "500", marginTop: -4 },
   filterGroup: { gap: 6 },
-  filterGroupTitle: { color: "#24323D", fontSize: 13, fontWeight: "600" },
+  filterGroupTitle: { color: colors.ink, fontSize: 13, fontWeight: "600" },
   field: { gap: 4 },
-  label: { color: "#425466", fontWeight: "600" },
-  input: { minHeight: 44, backgroundColor: "#FFFFFF", borderColor: "#CFE4FF", borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, color: "#24323D" },
-  dateField: { flex: 1, minHeight: 44, backgroundColor: "#FFFFFF", borderColor: "#CFE4FF", borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, justifyContent: "center", gap: 4 },
-  dateFieldActive: { borderColor: "#3A86FF", backgroundColor: "#F7FBFF" },
-  dateFieldDisabled: { borderColor: "#D8EAFE", backgroundColor: "#F1F5F9" },
-  dateFieldValue: { color: "#24323D", fontWeight: "600" },
-  dateFieldPlaceholder: { color: "#9AA6B2", fontWeight: "500" },
-  disabledField: { backgroundColor: "#F1F5F9", color: "#64748B" },
+  label: { color: colors.ink, fontWeight: "600" },
+  input: { minHeight: 48, backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 8, paddingHorizontal: 12, paddingVertical: 10, fontSize: 16, color: colors.ink },
+  dateField: { flex: 1, minHeight: 44, backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 8, paddingHorizontal: 10, paddingVertical: 8, justifyContent: "center", gap: 4 },
+  dateFieldActive: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
+  dateFieldDisabled: { borderColor: colors.line, backgroundColor: colors.soft },
+  dateFieldValue: { color: colors.ink, fontWeight: "600" },
+  dateFieldPlaceholder: { color: colors.muted, fontWeight: "500" },
+  disabledField: { backgroundColor: colors.soft, color: colors.muted },
   textarea: { minHeight: 72, paddingTop: 8 },
   twoCol: { flexDirection: "row", gap: 8 },
   segment: { flexDirection: "row", gap: 6 },
   segmentWrap: { flexDirection: "row", gap: 6, flexWrap: "wrap" },
   editorStepRow: { flexDirection: "row", gap: 6, alignItems: "stretch" },
-  editorStepButton: { flex: 1, minWidth: 0, minHeight: 44, borderWidth: 1, borderColor: "#CFE4FF", borderRadius: 999, paddingHorizontal: 6, paddingVertical: 6, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  editorStepButtonActive: { backgroundColor: "#3A86FF", borderColor: "#3A86FF" },
-  editorStepButtonText: { color: "#24323D", fontWeight: "700", fontSize: 12 },
-  editorStepButtonTextActive: { color: "#FFFFFF" },
-  segmentButton: { flex: 1, minHeight: 44, borderColor: "#CFE4FF", borderWidth: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#FFFFFF" },
-  segmentButtonActive: { backgroundColor: "#FFBE0B", borderColor: "#FFBE0B" },
-  segmentButtonText: { color: "#24323D", fontWeight: "700" },
+  editorStepButton: { flex: 1, minWidth: 0, minHeight: 44, borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 6, paddingVertical: 6, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  editorStepButtonActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  editorStepButtonText: { color: colors.ink, fontWeight: "700", fontSize: 12 },
+  editorStepButtonTextActive: { color: colors.surface },
+  segmentButton: { flex: 1, minHeight: 44, borderColor: colors.line, borderWidth: 1, borderRadius: 8, paddingVertical: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.surface },
+  segmentButtonActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  segmentButtonText: { color: colors.ink, fontWeight: "700" },
   segmentButtonTextActive: { color: "#ffffff" },
-  filterChip: { minHeight: 44, borderWidth: 1, borderColor: "#CFE4FF", borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  filterChipActive: { backgroundColor: "#3A86FF", borderColor: "#3A86FF" },
-  filterChipText: { color: "#24323D", fontWeight: "700" },
+  filterChip: { minHeight: 44, borderWidth: 1, borderColor: colors.line, borderRadius: 999, paddingHorizontal: 10, paddingVertical: 6, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  filterChipActive: { backgroundColor: colors.accent, borderColor: colors.accent },
+  filterChipText: { color: colors.ink, fontWeight: "700" },
   filterChipTextActive: { color: "#fff" },
-  suggestionRow: { borderColor: "#CFE4FF", borderWidth: 1, borderRadius: 8, padding: 10, backgroundColor: "#FFFFFF" },
+  suggestionRow: { borderColor: colors.line, borderWidth: 1, borderRadius: 8, padding: 10, backgroundColor: colors.surface },
   actionRow: { flexDirection: "row", gap: 8, flexWrap: "wrap" },
   actionRowCompact: { flexDirection: "row", gap: 6, alignItems: "center", flexShrink: 0 },
   actionRowWrap: { flexDirection: "row", gap: 6, marginTop: 6, flexWrap: "wrap" },
-  primaryButton: { minHeight: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#3A86FF", paddingHorizontal: 12, flexGrow: 1 },
+  primaryButton: { minHeight: 48, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.accent, paddingHorizontal: 16, paddingVertical: 10, flexGrow: 1 },
   primaryButtonText: { color: "#ffffff", fontWeight: "700" },
-  primaryMiniButton: { minHeight: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#3A86FF", paddingHorizontal: 10, paddingVertical: 8 },
-  primaryMiniText: { color: "#FFFFFF", fontWeight: "700", fontSize: 12 },
-  secondaryButton: { minHeight: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: "#EAF7F1", borderColor: "#3A86FF", borderWidth: 1, paddingHorizontal: 12, flexGrow: 1 },
-  secondaryButtonText: { color: "#3A86FF", fontWeight: "700" },
+  primaryMiniButton: { minHeight: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.accent, paddingHorizontal: 10, paddingVertical: 8 },
+  primaryMiniText: { color: colors.surface, fontWeight: "700", fontSize: 12 },
+  secondaryButton: { minHeight: 44, borderRadius: 8, alignItems: "center", justifyContent: "center", backgroundColor: colors.soft, borderColor: colors.accent, borderWidth: 1, paddingHorizontal: 12, flexGrow: 1 },
+  secondaryButtonText: { color: colors.accent, fontWeight: "700" },
   textButton: { minHeight: 44, paddingHorizontal: 8, paddingVertical: 7, alignItems: "center", justifyContent: "center" },
-  textButtonLabel: { color: "#3A86FF", fontWeight: "600" },
-  actionMiniButton: { minHeight: 44, borderRadius: 8, borderColor: "#CFE4FF", borderWidth: 1, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  actionMiniButtonDanger: { minHeight: 44, borderRadius: 8, borderColor: "#FFB4B4", borderWidth: 1, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  actionMiniText: { color: "#24323D", fontWeight: "700", fontSize: 12 },
+  textButtonLabel: { color: colors.accent, fontWeight: "600" },
+  actionMiniButton: { minHeight: 44, borderRadius: 8, borderColor: colors.line, borderWidth: 1, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  actionMiniButtonDanger: { minHeight: 44, borderRadius: 8, borderColor: "#FFB4B4", borderWidth: 1, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  actionMiniText: { color: colors.ink, fontWeight: "700", fontSize: 12 },
   actionMiniTextDanger: { color: "#E05252", fontWeight: "700", fontSize: 12 },
-  tripActionButton: { minHeight: 34, borderRadius: 8, borderColor: "#CFE4FF", borderWidth: 1, paddingHorizontal: 9, paddingVertical: 3, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  tripActionButtonDanger: { minHeight: 34, borderRadius: 8, borderColor: "#FFB4B4", borderWidth: 1, paddingHorizontal: 9, paddingVertical: 3, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  tripActionText: { color: "#24323D", fontWeight: "600", fontSize: 12 },
+  tripActionButton: { minHeight: 44, borderRadius: 8, borderColor: colors.line, borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  tripActionButtonDanger: { minHeight: 44, borderRadius: 8, borderColor: "#E7C4C4", borderWidth: 1, paddingHorizontal: 12, paddingVertical: 8, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  tripActionText: { color: colors.ink, fontWeight: "600", fontSize: 12 },
   tripActionTextDanger: { color: "#E05252", fontWeight: "600", fontSize: 12 },
   disabled: { opacity: 0.65 },
-  card: { backgroundColor: "#FFFFFF", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, padding: 10, gap: 4 },
-  emptyState: { backgroundColor: "#FFFFFF", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, padding: 12, gap: 8, alignItems: "stretch" },
-  cardSelected: { borderColor: "#3A86FF", borderWidth: 2, backgroundColor: "#F7FBFF" },
-  inlineCard: { borderRadius: 8, borderColor: "#D8EAFE", borderWidth: 1, backgroundColor: "#FFFFFF", padding: 8, gap: 6 },
-  selectedActionBar: { borderRadius: 8, borderColor: "#CFE4FF", borderWidth: 1, backgroundColor: "#F7FBFF", paddingHorizontal: 8, paddingVertical: 7, gap: 6, flexDirection: "row", alignItems: "center" },
+  card: { backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 10, padding: 18, gap: 9 },
+  emptyState: { backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 10, padding: 20, gap: 12, alignItems: "stretch" },
+  cardSelected: { borderColor: colors.accent, borderWidth: 2, backgroundColor: colors.accentSoft },
+  inlineCard: { borderRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.surface, padding: 8, gap: 6 },
+  selectedActionBar: { borderRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.accentSoft, paddingHorizontal: 8, paddingVertical: 7, gap: 6, flexDirection: "row", alignItems: "center" },
   selectedActionTextGroup: { flex: 1, minWidth: 0 },
-  selectedActionTitle: { color: "#24323D", fontSize: 14, fontWeight: "800" },
-  selectedActionMeta: { color: "#64748B", fontSize: 11, fontWeight: "600", marginTop: 1 },
-  moreActionPanel: { flexDirection: "row", gap: 6, flexWrap: "wrap", borderTopColor: "#E7F0FF", borderTopWidth: 1, paddingTop: 7, marginTop: 2 },
+  selectedActionTitle: { color: colors.ink, fontSize: 14, fontWeight: "800" },
+  selectedActionMeta: { color: colors.muted, fontSize: 11, fontWeight: "600", marginTop: 1 },
+  moreActionPanel: { flexDirection: "row", gap: 6, flexWrap: "wrap", borderTopColor: colors.line, borderTopWidth: 1, paddingTop: 7, marginTop: 2 },
   timelinePanel: { gap: 10 },
   timelineGroup: { gap: 6 },
-  timelineMonthTitle: { color: "#24323D", fontWeight: "800", fontSize: 16 },
+  timelineMonthTitle: { color: colors.ink, fontWeight: "600", fontSize: 18 },
   timelineRow: { flexDirection: "row", gap: 8 },
   timelineDotColumn: { width: 22, alignItems: "center", paddingTop: 8 },
-  timelineDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: "#CFE4FF", borderColor: "#3A86FF", borderWidth: 2 },
-  timelineDotSelected: { backgroundColor: "#3A86FF" },
-  timelineContent: { flex: 1, backgroundColor: "#FFFFFF", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, padding: 9, gap: 4 },
-  calendarCard: { borderRadius: 8, borderColor: "#BDEBDB", borderWidth: 1, backgroundColor: "#F7FFFB", padding: 8, gap: 8 },
+  timelineDot: { width: 12, height: 12, borderRadius: 6, backgroundColor: colors.line, borderColor: colors.accent, borderWidth: 2 },
+  timelineDotSelected: { backgroundColor: colors.accent },
+  timelineContent: { flex: 1, backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 10, padding: 16, gap: 8 },
+  calendarCard: { borderRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.surface, padding: 8, gap: 8 },
   calendarHeader: { flexDirection: "row", justifyContent: "space-between", alignItems: "center", gap: 8 },
   calendarMonthRow: { flexDirection: "row", alignItems: "center", gap: 8 },
-  calendarNavButton: { minHeight: 34, minWidth: 64, borderRadius: 8, borderColor: "#CFE4FF", borderWidth: 1, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center", paddingHorizontal: 10, paddingVertical: 6 },
-  calendarNavText: { color: "#24323D", fontWeight: "600" },
-  calendarMonthLabel: { flex: 1, textAlign: "center", color: "#24323D", fontWeight: "600" },
+  calendarNavButton: { minHeight: 34, minWidth: 64, borderRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center", paddingHorizontal: 10, paddingVertical: 6 },
+  calendarNavText: { color: colors.ink, fontWeight: "600" },
+  calendarMonthLabel: { flex: 1, textAlign: "center", color: colors.ink, fontWeight: "600" },
   calendarWeekdaysRow: { flexDirection: "row", gap: 4 },
-  calendarWeekdayLabel: { flex: 1, textAlign: "center", color: "#64748B", fontSize: 12, fontWeight: "600" },
+  calendarWeekdayLabel: { flex: 1, textAlign: "center", color: colors.muted, fontSize: 12, fontWeight: "600" },
   calendarDaysRow: { flexDirection: "row", gap: 4 },
-  calendarDayButton: { flex: 1, minHeight: 40, borderRadius: 8, borderColor: "#D8EAFE", borderWidth: 1, backgroundColor: "#FFFFFF", alignItems: "center", justifyContent: "center" },
-  calendarDayButtonMuted: { borderColor: "#EEF2F7", backgroundColor: "#F8FAFC" },
-  calendarDayButtonToday: { borderColor: "#3A86FF" },
-  calendarDayButtonSelected: { borderColor: "#3A86FF", backgroundColor: "#3A86FF" },
-  calendarDayText: { color: "#24323D", fontWeight: "600" },
-  calendarDayTextMuted: { color: "#94A3B8" },
-  calendarDayTextSelected: { color: "#FFFFFF" },
-  stayDateCard: { borderRadius: 8, borderColor: "#BDEBDB", borderWidth: 1, backgroundColor: "#F7FFFB", padding: 8, gap: 6 },
+  calendarDayButton: { flex: 1, minHeight: 40, borderRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.surface, alignItems: "center", justifyContent: "center" },
+  calendarDayButtonMuted: { borderColor: colors.line, backgroundColor: colors.background },
+  calendarDayButtonToday: { borderColor: colors.accent },
+  calendarDayButtonSelected: { borderColor: colors.accent, backgroundColor: colors.accent },
+  calendarDayText: { color: colors.ink, fontWeight: "600" },
+  calendarDayTextMuted: { color: colors.muted },
+  calendarDayTextSelected: { color: colors.surface },
+  stayDateCard: { borderRadius: 8, borderColor: colors.line, borderWidth: 1, backgroundColor: colors.surface, padding: 8, gap: 6 },
   dateInputColumn: { flex: 1 },
-  rowCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 7, backgroundColor: "#FFFFFF" },
+  rowCard: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", borderColor: colors.line, borderWidth: 1, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 7, backgroundColor: colors.surface },
   rowCardText: { flex: 1, paddingRight: 8 },
   rowSpaceBetween: { flexDirection: "row", justifyContent: "space-between", alignItems: "center" },
-  personRowCard: { flexDirection: "row", alignItems: "center", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 7, backgroundColor: "#FFFFFF", gap: 8 },
-  personRowCardDragging: { borderColor: "#3A86FF", backgroundColor: "#EAF7F1", zIndex: 10, elevation: 3 },
+  personRowCard: { flexDirection: "row", alignItems: "center", borderColor: colors.line, borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 7, backgroundColor: colors.surface, gap: 8 },
+  personRowCardDragging: { borderColor: colors.accent, backgroundColor: colors.soft, zIndex: 10, elevation: 3 },
   personRowDragArea: { flex: 1, minWidth: 0, alignSelf: "stretch", justifyContent: "center", borderRadius: 7, paddingVertical: 3, paddingRight: 4 },
   personRowText: { minWidth: 0, paddingRight: 4 },
   personRowActions: { flexDirection: "row", gap: 6, flexShrink: 0, justifyContent: "flex-end" },
   cardTop: { flexDirection: "row", justifyContent: "space-between", alignItems: "flex-start", gap: 12 },
-  cardTitle: { flex: 1, fontSize: 17, fontWeight: "700", color: "#24323D" },
-  cardTitleSmall: { fontSize: 15, fontWeight: "600", color: "#24323D" },
+  cardTitle: { flex: 1, fontSize: 21, fontWeight: "700", color: colors.ink, letterSpacing: -0.4 },
+  cardTitleSmall: { fontSize: 17, fontWeight: "600", color: colors.ink },
   badgeRow: { flexDirection: "row", alignItems: "center", justifyContent: "flex-end", gap: 6, flexShrink: 0, flexWrap: "wrap" },
-  selectedBadge: { overflow: "hidden", borderRadius: 6, backgroundColor: "#EAF7F1", color: "#2563EB", borderColor: "#3A86FF", borderWidth: 1, fontWeight: "800", paddingHorizontal: 7, paddingVertical: 3, fontSize: 12 },
-  badge: { overflow: "hidden", borderRadius: 6, backgroundColor: "#FFBE0B", color: "#24323D", fontWeight: "700", paddingHorizontal: 7, paddingVertical: 3, fontSize: 12 },
-  cardMeta: { color: "#64748B", fontWeight: "500" },
-  cardText: { color: "#24323D", lineHeight: 20 },
-  checkItem: { minHeight: 44, borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: "#FFFFFF", justifyContent: "center" },
-  checkItemActive: { backgroundColor: "#EAF7F1", borderColor: "#3A86FF" },
-  checkItemText: { color: "#24323D", fontWeight: "700" },
-  checkItemTextActive: { color: "#3A86FF" },
+  selectedBadge: { overflow: "hidden", borderRadius: 6, backgroundColor: colors.soft, color: colors.accent, borderColor: colors.accent, borderWidth: 1, fontWeight: "800", paddingHorizontal: 7, paddingVertical: 3, fontSize: 12 },
+  badge: { overflow: "hidden", borderRadius: 5, backgroundColor: colors.accentSoft, color: colors.accent, fontWeight: "600", paddingHorizontal: 8, paddingVertical: 4, fontSize: 11 },
+  cardMeta: { color: colors.muted, fontWeight: "400", fontSize: 13, lineHeight: 20 },
+  cardText: { color: colors.ink, fontSize: 15, lineHeight: 23 },
+  checkItem: { minHeight: 44, borderColor: colors.line, borderWidth: 1, borderRadius: 8, paddingHorizontal: 9, paddingVertical: 6, backgroundColor: colors.surface, justifyContent: "center" },
+  checkItemActive: { backgroundColor: colors.soft, borderColor: colors.accent },
+  checkItemText: { color: colors.ink, fontWeight: "700" },
+  checkItemTextActive: { color: colors.accent },
   error: { color: "#B42318", backgroundColor: "#FFECEC", borderRadius: 8, padding: 10 },
   inlineError: { marginHorizontal: 16, marginTop: 10, color: "#B42318", backgroundColor: "#FFECEC", borderRadius: 8, padding: 10 },
-  inlineNotice: { marginHorizontal: 16, marginTop: 10, color: "#22577A", backgroundColor: "#EAF7F1", borderRadius: 8, padding: 10, lineHeight: 20 },
-  notice: { color: "#22577A", backgroundColor: "#EAF7F1", borderRadius: 8, padding: 10, lineHeight: 20 },
-  helperText: { color: "#64748B", lineHeight: 20 },
-  linkText: { color: "#3A86FF", fontWeight: "600" },
+  inlineNotice: { marginHorizontal: 16, marginTop: 10, color: colors.success, backgroundColor: colors.soft, borderRadius: 8, padding: 10, lineHeight: 20 },
+  notice: { color: colors.success, backgroundColor: colors.soft, borderRadius: 8, padding: 10, lineHeight: 20 },
+  helperText: { color: colors.muted, lineHeight: 20 },
+  linkText: { color: colors.accent, fontWeight: "600" },
   loader: { marginBottom: 10 },
-  mapDetailCard: { backgroundColor: "#FFFFFF", borderColor: "#D8EAFE", borderWidth: 1, borderRadius: 8, padding: 14, gap: 6 },
+  mapDetailCard: { backgroundColor: colors.surface, borderColor: colors.line, borderWidth: 1, borderRadius: 8, padding: 14, gap: 6 },
 });

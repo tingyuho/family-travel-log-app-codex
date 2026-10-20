@@ -39,6 +39,10 @@ export function clearAuthState() {
   setAuthState("", "");
 }
 
+export class ApiError extends Error {
+  constructor(message, status) { super(message); this.name = "ApiError"; this.status = status; }
+}
+
 async function request(path, options = {}) {
   if (!API_BASE && !import.meta.env.DEV) {
     throw new Error("Missing VITE_API_BASE_URL in this deployed frontend build");
@@ -60,7 +64,7 @@ async function request(path, options = {}) {
 
   if (!response.ok) {
     const text = await response.text();
-    throw new Error(parseApiError(text) || `Request failed (${response.status})`);
+    throw new ApiError(parseApiError(text) || `Request failed (${response.status})`, response.status);
   }
 
   if (response.status === 204) {
@@ -135,6 +139,12 @@ export function fetchTrips(query = "") {
   return request(`/api/trips${suffix}`);
 }
 
+export function fetchTrip(id) { return request("/api/trips/" + id); }
+
+export function addTripStop(id, payload) {
+  return request("/api/trips/" + id + "/stops", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function createTrip(payload) {
   return request("/api/trips", {
     method: "POST",
@@ -143,6 +153,9 @@ export function createTrip(payload) {
 }
 
 export function updateTrip(id, payload) {
+  if (!Number.isInteger(payload.version) || payload.version < 1) {
+    return Promise.reject(new ApiError("Reopen this trip after updating the app before saving. Your draft has been kept.", 428));
+  }
   return request(`/api/trips/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),

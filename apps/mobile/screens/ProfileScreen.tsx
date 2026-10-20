@@ -13,6 +13,7 @@ import PeopleScreen from "./PeopleScreen";
 
 type ProfileScreenProps = {
   styles: AppStyles;
+  onLogout: () => void;
   Field: FieldComponent;
   sessionUser: string;
   profileEmail: string;
@@ -34,6 +35,7 @@ type ProfileScreenProps = {
 export default function ProfileScreen(props: ProfileScreenProps) {
   const {
     styles,
+    onLogout,
     Field,
     sessionUser,
     profileEmail,
@@ -167,6 +169,7 @@ export default function ProfileScreen(props: ProfileScreenProps) {
         </Pressable>
       </View>
       <View style={styles.formBlock}>
+        <Pressable accessibilityRole="button" accessibilityLabel="Log out of account" style={styles.textButton} onPress={onLogout}><Text style={styles.textButtonLabel}>Log Out</Text></Pressable>
         <Field label="User ID" value={sessionUser} onChangeText={() => {}} editable={false} />
         <Field
           label="Email"

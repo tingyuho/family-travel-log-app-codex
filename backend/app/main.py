@@ -16,6 +16,9 @@ from .env import configured_frontend_origins, is_production_environment
 from .mailer import is_mailer_configured, send_password_reset_email
 from .operations import OperationsMiddleware, release_identifier
 from .repository import (
+    append_trip_stop,
+    TripConflictError,
+    TripVersionRequiredError,
     authenticate_user,
     consume_password_reset_code,
     create_person_profile,
@@ -59,6 +62,7 @@ from .schemas import (
     Trip,
     TripCreate,
     TripUpdate,
+    TripStopCreate,
     UserLogin,
     UserProfile,
     UserProfileUpdate,
@@ -459,9 +463,25 @@ def post_trip(payload: TripCreate, current_user_id: str = Depends(get_current_us
 
 @app.put("/api/trips/{trip_id}", response_model=Trip)
 def put_trip(trip_id: int, payload: TripUpdate, current_user_id: str = Depends(get_current_user_id)) -> Trip:
-    updated = update_trip(current_user_id, trip_id, payload)
+    try:
+        updated = update_trip(current_user_id, trip_id, payload)
+    except TripVersionRequiredError:
+        raise HTTPException(status_code=428, detail="Update the app and reopen this trip before editing. Your draft has been kept.")
+    except TripConflictError:
+        raise HTTPException(status_code=409, detail="This trip changed on another device. Your draft has been kept. Review the latest trip before editing again.")
     if updated is None:
         raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Trip not found")
+    return updated
+
+
+@app.post("/api/trips/{trip_id}/stops", response_model=Trip, status_code=status.HTTP_201_CREATED)
+def post_trip_stop(trip_id: int, payload: TripStopCreate, current_user_id: str = Depends(get_current_user_id)) -> Trip:
+    try:
+        updated = append_trip_stop(current_user_id, trip_id, payload)
+    except TripConflictError:
+        raise HTTPException(status_code=409, detail="This trip is being edited. Your stop has not been saved; try again.")
+    if updated is None:
+        raise HTTPException(status_code=404, detail="Trip not found")
     return updated
 
 

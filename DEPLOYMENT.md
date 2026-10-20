@@ -86,3 +86,30 @@ Configure the production URL repository variables, confirm the hourly verificati
 workflow succeeds, enable managed PostgreSQL backups, and assign workflow-alert owners.
 Follow [OPERATIONS.md](OPERATIONS.md) for service objectives, request tracing, backup
 integrity checks, restore drills, rollback procedures, and incident response.
+
+## Trip editing compatibility (October 19, 2026)
+
+The reliability update adds an integer trip version and a dedicated stop operation.
+Deploy the backend first, then the matching web client and a new iOS build. The
+backend startup migration adds the version column to existing SQLite/PostgreSQL
+trips with a starting value of 1; it does not remove trip data.
+
+- Trip responses now include a version. A full trip edit must send the version
+  captured when the editor opened. A stale version returns HTTP 409 without changing
+  the trip. A missing version returns HTTP 428 with an update/reopen message.
+- Older web/iOS clients can continue reading and creating trips, but their full
+  edits (including their old Quick Stop operation) are safely rejected. Update
+  those clients before resuming edits. Do not deploy a client-only release against
+  an older backend that lacks version checks and the stop endpoint.
+- POST /api/trips/{trip_id}/stops sends only a new route point and optional
+  itinerary event. It retries rejected version conflicts against the current trip,
+  preserving unrelated edits. Clients must not automatically retry write requests
+  after an ambiguous network failure.
+- Restored edit drafts retain the original version. Users can review the latest
+  trip, keep their draft, or explicitly replace it with the current saved trip.
+- Backend rollback must retain version enforcement while updated clients are in
+  use; reverting to the old write handler would remove overwrite protection.
+
+Before production rollout, run the PostgreSQL contract job and the physical iPhone
+acceptance checklist. Local validation uses temporary SQLite databases and does
+not migrate the production database or publish an iOS build.

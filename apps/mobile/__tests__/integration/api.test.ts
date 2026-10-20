@@ -49,6 +49,7 @@ describe("mobile api integration", () => {
 
     await updateMyProfile({ email: "alex@example.com" });
     await updateTrip(7, {
+      version: 1,
       title: "Trip",
       trip_kind: "past",
       start_date: "2026-01-01",
@@ -75,6 +76,11 @@ describe("mobile api integration", () => {
         expect.stringContaining("/api/locations/search?q=seattle&limit=8"),
       ])
     );
+  });
+
+  test("unversioned legacy drafts are rejected before sending a write", async () => {
+    await expect(updateTrip(7, { title: "Old draft", trip_kind: "past", notes: "", route: [], people: [], accommodations: [], itinerary: [] })).rejects.toMatchObject({ status: 428 });
+    expect(global.fetch).not.toHaveBeenCalled();
   });
 
   test("error parser surfaces detail from backend payload", async () => {

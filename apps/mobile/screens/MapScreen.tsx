@@ -7,6 +7,7 @@ import TravelMapPanel from "../components/TravelMapPanel";
 import type { AppStyles } from "../screenTypes";
 import type { TripFilterKind } from "../forms";
 import type { MapDisplayMode } from "../mapLayers";
+import { getOrderedRoutePoints } from "../mapLayers";
 
 type MapSheetState = "collapsed" | "expanded";
 
@@ -31,21 +32,25 @@ type MapScreenProps = {
   onSelectTrip: (tripId: number, stopLabel?: string) => void;
   formatDateRange: (start?: string | null, end?: string | null) => string;
   openTrips: () => void;
+  onBackToTrips?: () => void;
 };
 
 export default function MapScreen({
   styles,
   trips,
   selectedTripCount,
-  selectedTrip,
-  selectedTripId,
+  selectedTrip: focusedTrip,
+  selectedTripId: focusedTripId,
   selectedStopLabel,
   tripFilterKind,
   setTripFilterKind,
   onSelectTrip,
   formatDateRange,
   openTrips,
+  onBackToTrips,
 }: MapScreenProps) {
+  const selectedTrip = focusedTrip && trips.some((trip) => trip.id === focusedTrip.id) ? focusedTrip : null;
+  const selectedTripId = selectedTrip ? focusedTripId : null;
   const insets = useSafeAreaInsets();
   const [sheetState, setSheetState] = useState<MapSheetState>("collapsed");
   const [mapMode, setMapMode] = useState<MapDisplayMode>("routes");
@@ -54,6 +59,7 @@ export default function MapScreen({
   const hasFocusedTrip = Boolean(selectedTrip);
   const hasSelectedTrips = selectedTripCount > 0;
   const hasAnySheetContent = hasFocusedTrip || hasSelectedTrips;
+  const hasMapStops = trips.some((trip) => getOrderedRoutePoints(trip.route).length > 0);
   const hasTripNotes = Boolean(selectedTrip?.notes?.trim());
   const selectedTripIndex = selectedTrip ? trips.findIndex((trip) => trip.id === selectedTrip.id) : -1;
   const selectedTripPosition =
@@ -136,24 +142,12 @@ export default function MapScreen({
 
   return (
     <View style={styles.mapScreen}>
-      <View style={styles.mapBaseLayer}>
-        <TravelMapPanel
-          trips={trips}
-          selectedTripId={selectedTripId}
-          selectedTripCount={selectedTripCount}
-          mapMode={mapMode}
-          onSelectTrip={onSelectTrip}
-          fullScreen
-          immersive
-          styles={styles}
-        />
-      </View>
-
-      <View pointerEvents="box-none" style={styles.mapTopOverlay}>
+      <View testID="map-controls" style={styles.mapControls}>
+        {onBackToTrips ? <Pressable accessibilityRole="button" onPress={onBackToTrips}><Text style={styles.linkText}>Back to Trips</Text></Pressable> : null}
         <View style={styles.mapModeRow}>
           {([
             ["routes", "Routes"],
-            ["dots", "Dots"],
+            ["dots", "Places"],
           ] as Array<[MapDisplayMode, string]>).map(([value, label]) => {
             const active = mapMode === value;
             return (
@@ -201,90 +195,106 @@ export default function MapScreen({
         )}
       </View>
 
-      {hasAnySheetContent ? (
-        <View pointerEvents="box-none" style={bottomOverlayStyle}>
-          <Animated.View style={[styles.mapBottomSheet, { height: sheetHeight }]}>
-            <Pressable
-              accessibilityRole="button"
-              accessibilityLabel={sheetExpanded ? "Collapse map details" : "Expand map details"}
-              accessibilityState={{ expanded: sheetExpanded }}
-              style={styles.mapSheetHeader}
-              onPress={toggleSheet}
-              {...sheetPanResponder.panHandlers}
-            >
-              <View style={styles.mapSheetHandle} />
-              <View style={styles.rowSpaceBetween}>
-                <View style={styles.rowCardText}>
-                  <Text style={styles.mapSheetTitle}>
-                    {selectedTrip ? selectedTrip.title : `${selectedTripCount} selected trip${selectedTripCount === 1 ? "" : "s"}`}
-                  </Text>
-                  <Text style={styles.mapSheetMeta}>
-                    {selectedTrip
-                      ? [selectedTripPosition, formatDateRange(selectedTrip.start_date, selectedTrip.end_date)]
-                          .filter(Boolean)
-                          .join(" | ")
-                      : "Tap a map marker to focus a trip."}
-                  </Text>
-                </View>
-                <Text style={styles.mapSheetToggleText}>{sheetToggleLabel}</Text>
-              </View>
-            </Pressable>
+      <View testID="map-canvas" style={styles.mapCanvas}>
+        <View style={styles.mapBaseLayer}>
+          <TravelMapPanel
+            trips={trips}
+            selectedTripId={selectedTripId}
+            selectedTripCount={selectedTripCount}
+            mapMode={mapMode}
+            onSelectTrip={onSelectTrip}
+            emptyFilterKind={selectedTripCount ? "all" : tripFilterKind}
+            fullScreen
+            immersive
+            styles={styles}
+          />
+        </View>
 
-            {sheetExpanded && hasExpandedSheetDetails ? (
-              <View style={styles.mapSheetBody}>
-                {selectedTrip ? (
-                  <>
-                    {canPageSelectedTrips ? (
-                      <View style={styles.mapSheetPager}>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Show previous selected trip"
-                          style={styles.tripActionButton}
-                          onPress={() => focusRelativeSelectedTrip(-1)}
-                        >
-                          <Text style={styles.tripActionText}>Previous</Text>
-                        </Pressable>
-                        <Text style={styles.mapSheetPagerText}>{selectedTripPosition}</Text>
-                        <Pressable
-                          accessibilityRole="button"
-                          accessibilityLabel="Show next selected trip"
-                          style={styles.tripActionButton}
-                          onPress={() => focusRelativeSelectedTrip(1)}
-                        >
-                          <Text style={styles.tripActionText}>Next</Text>
-                        </Pressable>
-                      </View>
-                    ) : null}
-                    {selectedStopLabel ? <Text style={styles.cardText}>Focused stop: {selectedStopLabel}</Text> : null}
-                    {hasTripNotes ? <Text style={styles.cardText} numberOfLines={3}>{selectedTrip.notes}</Text> : null}
-                  </>
-                ) : (
-                  <Text style={styles.cardText}>Selected trips are visible on the map. Tap a marker to focus one trip and open its details.</Text>
-                )}
-              </View>
-            ) : null}
-
-            {selectedTrip && sheetExpanded ? (
+        {!hasMapStops ? null : hasAnySheetContent ? (
+          <View pointerEvents="box-none" style={bottomOverlayStyle}>
+            <Animated.View style={[styles.mapBottomSheet, { height: sheetHeight }]}>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={`View details for ${selectedTrip.title}`}
-                style={styles.mapSheetAction}
-                onPress={openTrips}
+                accessibilityLabel={sheetExpanded ? "Collapse map details" : "Expand map details"}
+                accessibilityState={{ expanded: sheetExpanded }}
+                style={styles.mapSheetHeader}
+                onPress={toggleSheet}
+                {...sheetPanResponder.panHandlers}
               >
-                <Text style={styles.mapSheetActionText}>View Trip Details</Text>
+                <View style={styles.mapSheetHandle} />
+                <View style={styles.rowSpaceBetween}>
+                  <View style={styles.rowCardText}>
+                    <Text style={styles.mapSheetTitle}>
+                      {selectedTrip ? selectedTrip.title : `${selectedTripCount} selected trip${selectedTripCount === 1 ? "" : "s"}`}
+                    </Text>
+                    <Text style={styles.mapSheetMeta}>
+                      {selectedTrip
+                        ? [selectedTripPosition, formatDateRange(selectedTrip.start_date, selectedTrip.end_date)]
+                            .filter(Boolean)
+                            .join(" | ")
+                        : "Tap a map marker to focus a trip."}
+                    </Text>
+                  </View>
+                  <Text style={styles.mapSheetToggleText}>{sheetToggleLabel}</Text>
+                </View>
               </Pressable>
-            ) : null}
-          </Animated.View>
-        </View>
-      ) : (
-        <View pointerEvents="box-none" style={bottomOverlayStyle}>
-          <View style={styles.mapBottomSheet}>
-            <View style={styles.mapSheetHandle} />
-            <Text style={styles.mapSheetTitle}>No trip focused</Text>
-            <Text style={styles.mapSheetMeta}>Tap a marker to see trip details here.</Text>
+
+              {sheetExpanded && hasExpandedSheetDetails ? (
+                <View style={styles.mapSheetBody}>
+                  {selectedTrip ? (
+                    <>
+                      {canPageSelectedTrips ? (
+                        <View style={styles.mapSheetPager}>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Show previous selected trip"
+                            style={styles.tripActionButton}
+                            onPress={() => focusRelativeSelectedTrip(-1)}
+                          >
+                            <Text style={styles.tripActionText}>Previous</Text>
+                          </Pressable>
+                          <Text style={styles.mapSheetPagerText}>{selectedTripPosition}</Text>
+                          <Pressable
+                            accessibilityRole="button"
+                            accessibilityLabel="Show next selected trip"
+                            style={styles.tripActionButton}
+                            onPress={() => focusRelativeSelectedTrip(1)}
+                          >
+                            <Text style={styles.tripActionText}>Next</Text>
+                          </Pressable>
+                        </View>
+                      ) : null}
+                      {selectedStopLabel ? <Text style={styles.cardText}>Focused stop: {selectedStopLabel}</Text> : null}
+                      {hasTripNotes ? <Text style={styles.cardText} numberOfLines={3}>{selectedTrip.notes}</Text> : null}
+                    </>
+                  ) : (
+                    <Text style={styles.cardText}>Selected trips are visible on the map. Tap a marker to focus one trip and open its details.</Text>
+                  )}
+                </View>
+              ) : null}
+
+              {selectedTrip && sheetExpanded ? (
+                <Pressable
+                  accessibilityRole="button"
+                  accessibilityLabel={`View details for ${selectedTrip.title}`}
+                  style={styles.mapSheetAction}
+                  onPress={openTrips}
+                >
+                  <Text style={styles.mapSheetActionText}>View Trip Details</Text>
+                </Pressable>
+              ) : null}
+            </Animated.View>
           </View>
-        </View>
-      )}
+        ) : (
+          <View pointerEvents="box-none" style={bottomOverlayStyle}>
+            <View style={styles.mapBottomSheet}>
+              <View style={styles.mapSheetHandle} />
+              <Text style={styles.mapSheetTitle}>No trip focused</Text>
+              <Text style={styles.mapSheetMeta}>Tap a marker to see trip details here.</Text>
+            </View>
+          </View>
+        )}
+      </View>
     </View>
   );
 }

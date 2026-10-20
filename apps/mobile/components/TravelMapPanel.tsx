@@ -1,9 +1,10 @@
 import { useEffect, useMemo, useRef, useState } from "react";
-import { Platform, Pressable, Text, UIManager, View } from "react-native";
+import { Platform, Pressable, ScrollView, Text, UIManager, View } from "react-native";
 import Constants from "expo-constants";
 import type { Region } from "react-native-maps";
 
 import type { Trip } from "../api";
+import type { TripFilterKind } from "../forms";
 import { featureFlags } from "../featureFlags";
 import {
   buildHeatCells,
@@ -26,6 +27,7 @@ type TravelMapPanelProps = {
   compact?: boolean;
   fullScreen?: boolean;
   immersive?: boolean;
+  emptyFilterKind?: TripFilterKind;
   styles: AppStyles;
 };
 
@@ -55,6 +57,7 @@ export default function TravelMapPanel({
   compact = false,
   fullScreen = false,
   immersive = false,
+  emptyFilterKind = "all",
   styles,
 }: TravelMapPanelProps) {
   const routedTrips = useMemo(
@@ -304,15 +307,26 @@ export default function TravelMapPanel({
           )}
         </>
       ) : (
-        <View style={styles.card}>
-          <Text style={styles.cardTitle}>No map stops yet</Text>
-          <Text style={styles.cardText}>Your trips are saved. Add a place in a trip's Route step when you want it to appear here.</Text>
-          {tripsWithoutStops.slice(0, 4).map((trip) => (
-            <Text key={`unmapped-trip-${trip.id}`} style={styles.cardMeta}>
-              {trip.title}
+        <ScrollView
+          style={immersive ? styles.mapEmptyScroll : undefined}
+          contentContainerStyle={immersive ? styles.mapEmptyContent : undefined}
+        >
+          <View testID="map-empty-state" style={styles.card}>
+            <Text style={styles.cardTitle}>
+              {trips.length ? "These trips don't have map stops yet" : `No ${emptyFilterKind === "all" ? "" : `${emptyFilterKind} `}trips to display`}
             </Text>
-          ))}
-        </View>
+            <Text style={styles.cardText}>
+              {trips.length
+                ? "Add a place in a trip's Route step to show it on the map."
+                : "Try another filter, or add a trip from the Trips screen."}
+            </Text>
+            {tripsWithoutStops.slice(0, 4).map((trip) => (
+              <Text key={`unmapped-trip-${trip.id}`} style={styles.cardMeta}>
+                {trip.title}
+              </Text>
+            ))}
+          </View>
+        </ScrollView>
       )}
     </View>
   );

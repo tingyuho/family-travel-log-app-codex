@@ -16,6 +16,7 @@ export type RoutePoint = {
 };
 
 export type Trip = {
+  version: number;
   id: number;
   title: string;
   trip_kind: "past" | "wishlist";
@@ -59,6 +60,7 @@ export type ItineraryEventInput = {
 };
 
 export type TripWritePayload = {
+  version?: number;
   title: string;
   trip_kind: "past" | "wishlist";
   start_date?: string | null;
@@ -105,6 +107,11 @@ export type PlaceSuggestion = {
   lat: string;
   lon: string;
 };
+
+export class ApiError extends Error {
+  constructor(message: string, public readonly status: number) { super(message); this.name = "ApiError"; }
+}
+export type TripStopInput = { point: RoutePoint; itinerary_event?: ItineraryEventInput | null };
 
 const TOKEN_KEY = "travel_log_token";
 const USER_ID_KEY = "travel_log_user_id";
@@ -230,7 +237,7 @@ async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
           continue;
         }
         const text = await response.text();
-        throw new Error(parseApiError(text) || `Request failed (${response.status})`);
+        throw new ApiError(parseApiError(text) || `Request failed (${response.status})`, response.status);
       }
 
       if (response.status === 204) {
@@ -341,6 +348,12 @@ export function fetchTrips(query = "") {
   return request<Trip[]>(`/api/trips${suffix}`);
 }
 
+export function fetchTrip(id: number) { return request<Trip>("/api/trips/" + id); }
+
+export function addTripStop(id: number, payload: TripStopInput) {
+  return request<Trip>("/api/trips/" + id + "/stops", { method: "POST", body: JSON.stringify(payload) });
+}
+
 export function createTrip(payload: TripDraft | TripWritePayload) {
   return request<Trip>("/api/trips", {
     method: "POST",
@@ -349,6 +362,9 @@ export function createTrip(payload: TripDraft | TripWritePayload) {
 }
 
 export function updateTrip(id: number, payload: TripWritePayload) {
+  if (!Number.isInteger(payload.version) || (payload.version ?? 0) < 1) {
+    return Promise.reject(new ApiError("Reopen this trip after updating the app before saving. Your draft has been kept.", 428));
+  }
   return request<Trip>(`/api/trips/${id}`, {
     method: "PUT",
     body: JSON.stringify(payload),

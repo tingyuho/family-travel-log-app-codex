@@ -1,5 +1,6 @@
 import { useMemo, useState } from "react";
 import { FlatList, Modal, Pressable, StyleSheet, Text, TextInput, View } from "react-native";
+import { plannerColors as colors } from "../plannerTheme";
 import { SafeAreaView } from "react-native-safe-area-context";
 
 import type { Trip } from "../api";
@@ -91,20 +92,20 @@ export default function QuickStopTripPicker({ trips, selectedTripId, formatDateR
 }
 
 const pickerStyles = StyleSheet.create({
-  sheet: { flex: 1, backgroundColor: "#fffdf7" },
+  sheet: { flex: 1, backgroundColor: colors.background },
   header: { flexDirection: "row", alignItems: "center", justifyContent: "space-between", paddingHorizontal: 20, paddingVertical: 12, gap: 12 },
-  heading: { flex: 1, fontSize: 24, fontWeight: "800", color: "#233640" },
+  heading: { flex: 1, fontSize: 24, fontWeight: "800", color: colors.ink },
   close: { minHeight: 44, justifyContent: "center", paddingHorizontal: 8 },
-  link: { fontSize: 17, fontWeight: "700", color: "#3478f6" },
-  search: { marginHorizontal: 20, padding: 14, minHeight: 50, borderRadius: 12, borderWidth: 1, borderColor: "#c8dfff", backgroundColor: "#fff", color: "#233640", fontSize: 17 },
-  caption: { marginHorizontal: 20, marginTop: 18, marginBottom: 8, fontSize: 15, fontWeight: "600", color: "#64748b" },
+  link: { fontSize: 17, fontWeight: "700", color: colors.accent },
+  search: { marginHorizontal: 20, padding: 14, minHeight: 50, borderRadius: 12, borderWidth: 1, borderColor: colors.line, backgroundColor: colors.surface, color: colors.ink, fontSize: 17 },
+  caption: { marginHorizontal: 20, marginTop: 18, marginBottom: 8, fontSize: 15, fontWeight: "600", color: colors.muted },
   list: { flex: 1 },
-  row: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 20, marginBottom: 8, padding: 16, minHeight: 72, borderWidth: 1, borderColor: "#dbe6f4", borderRadius: 12, backgroundColor: "#fff" },
-  selectedRow: { borderColor: "#3478f6", backgroundColor: "#eef5ff" },
+  row: { flexDirection: "row", alignItems: "center", gap: 12, marginHorizontal: 20, marginBottom: 8, padding: 16, minHeight: 72, borderWidth: 1, borderColor: colors.line, borderRadius: 12, backgroundColor: colors.surface },
+  selectedRow: { borderColor: colors.accent, backgroundColor: colors.accentSoft },
   rowText: { flex: 1, gap: 4 },
-  title: { color: "#233640", fontSize: 17, fontWeight: "700" },
-  dates: { color: "#64748b", fontSize: 15 },
-  check: { color: "#3478f6", fontSize: 24, fontWeight: "700" },
-  empty: { padding: 20, color: "#64748b", fontSize: 17 },
+  title: { color: colors.ink, fontSize: 17, fontWeight: "700" },
+  dates: { color: colors.muted, fontSize: 15 },
+  check: { color: colors.accent, fontSize: 24, fontWeight: "700" },
+  empty: { padding: 20, color: colors.muted, fontSize: 17 },
   showAll: { padding: 20, minHeight: 56, alignItems: "center" },
 });

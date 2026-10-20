@@ -142,7 +142,7 @@ def test_trip_crud_is_user_scoped(sqlite_db):
 
     updated = main.put_trip(
         trip.id,
-        TripUpdate(**{**sample_trip("Beach trip updated").model_dump(), "notes": "Updated"}),
+        TripUpdate(**{**sample_trip("Beach trip updated").model_dump(), "notes": "Updated", "version": trip.version}),
         current_user_id="tester",
     )
     assert updated.title == "Beach trip updated"
