@@ -1,5 +1,14 @@
 # Mobile Rollout Checklist
 
+## Current rollout — October 19, 2026
+
+The matching Modern Planner backend and website are live on the existing public
+domain. The new native build remains pending because the Expo account-access
+permission was declined. The latest known signed build is still 1.0.0 build 3.
+Use the website for trip editing until a new matching iPhone build is installed;
+older clients now receive HTTP 428 for versionless edits and old Quick Stop saves.
+See [owner handoff](../../docs/MODERN_PLANNER_HANDOFF.md). No device pass is claimed.
+
 ## Feature Flags
 - `EXPO_PUBLIC_FEATURE_MAP_ADVANCED_LAYERS`
 - `EXPO_PUBLIC_FEATURE_MAP_CLUSTERS`
@@ -47,6 +56,15 @@
 - [ ] Repeat on a narrow iPhone, with larger text and long trip titles; controls wrap and empty guidance remains scrollable.
 
 ## Real Device Smoke Checklist
+
+Modern Planner candidate (native build pending):
+
+- [ ] Confirm this is the new candidate, not the earlier 1.0.0 build 3.
+- [ ] Check blue accents, light surfaces, trip totals, and labeled bottom navigation.
+- [ ] Open a trip and switch Itinerary, Places, and Stays; confirm all saved details remain reachable.
+- [ ] Check the sign-in artwork, forms, family profiles, and packing lists with larger text.
+- [ ] Repeat trip creation/editing, Add Stop, and packing persistence against the matching versioned backend.
+- [ ] Record the installed build number and physical-device outcome before claiming acceptance.
 
 Shared UI priorities 1 and 2 (local source, not yet in TestFlight):
 

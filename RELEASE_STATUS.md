@@ -1,21 +1,59 @@
 # Release milestone status — updated October 19, 2026
 
-Goal: hosted web app and an iPhone release candidate using the production backend.
-The hosted web/backend deployment is verified. The milestone remains open until
-the TestFlight build, real iPhone checks, and operations handoff pass.
+The Modern Planner website and backend are live and verified on the existing public
+domain. The matching iPhone build, physical-device review, and operations handoff
+remain open. Historical release notes below describe earlier builds.
 
-## Modern Planner release candidate — October 19
+## Modern Planner — live on the existing domain, October 19
 
-Release preparation now includes a passing PostgreSQL contract on the isolated Neon
-branch `modern-planner-validation-2026-10-19` (`br-damp-unit-anj7lv77`). Production
-data was not used as a contract-test target. The no-compute recovery checkpoint is
-`pre-modern-planner-2026-10-19` (`br-shiny-cherry-an4qsfnl`).
+Website: https://family-travel-log-app-codex.vercel.app. Both web and backend now run
+code candidate `e711b37baf95bc9e080565f12d439dccb856fca0`. The existing Render service,
+Neon production database, Vercel project, and public domain were reused. No additional
+preview server or domain was created.
 
-Live production place search returned HTTP 200 with a real Yosemite Valley result,
-using the dedicated synthetic account `moderncheck_mvg35xjs`. No password or token is
-stored in the repository. Repository secret scanning and iOS release preflight pass.
-The owner will perform the physical iPhone review after the candidate is prepared.
-Publishing and the new signed build remain in progress; no device pass is claimed.
+- Render deployment `dep-dbbe0ke7bikc7387hl9g` is live on the existing API origin.
+  The additive startup migration installed trip-version protection.
+- Vercel deployment `dpl_GkCKHejX5tLeTAM7uyK7WUXYSPAq` was promoted to the existing
+  primary domain after its source-commit metadata was verified.
+- Fresh pre-rollout Neon recovery checkpoint: `pre-modern-planner-rollout-2026-10-19`
+  (`br-frosty-cherry-anf7zqsa`), copied from production without a compute endpoint.
+- Full cloud release confidence passed on that exact code commit:
+  https://github.com/tingyuho/family-travel-log-app-codex/actions/runs/39361433602.
+  Earlier PostgreSQL contract validation used isolated branch `br-damp-unit-anj7lv77`.
+- Final production verification passes for release `e711b37baf95`: PostgreSQL, release
+  identity, security headers, web entry point, and exact primary-domain CORS preflight.
+- Hosted synthetic-account API checks pass for login, trip creation/editing, real
+  Yosemite place search, appending a stop, and persistence. Stale edits return 409;
+  versionless edits from older clients return 428, as designed.
+- Browser checks on the primary domain also passed: login, name-only trip creation,
+  editing notes/title, searching and adding Yosemite Valley, reopening after refresh,
+  map navigation, and logout. No browser console errors were captured.
+  [Live browser evidence](docs/images/modern-planner-live.jpg).
+- Synthetic test data is isolated to account `moderncheck_mvg35xjs`. No password,
+  session token, or database connection string is stored in this repository.
+
+The old unique staging address is superseded by the primary domain. Its original
+Failed to fetch error came from the staging origin being outside the production
+CORS allowlist. The primary domain passes its CORS check. The earlier
+[staging screenshot](docs/images/modern-planner-staged.jpg) is historical evidence only.
+
+Chrome's red Dangerous badge from the owner's screenshot remains a separate owner
+check: the public Google report returned No available data for the old staging
+address. That result does not establish that the warning was incorrect or cleared.
+If the primary domain also warns, stop before entering credentials and inspect
+Chrome's reason and Search Console Security Issues; request Google's review after
+any reported issues are resolved. Do not bypass the warning or turn protection off.
+
+The Expo account-access command was declined at the execution permission prompt.
+No new signed Modern Planner iOS build or App Store Connect submission was started.
+The previous 1.0.0 build 3 remains the latest known signed build. Older iPhone clients
+can read/create trips but cannot edit trips or use their old Quick Stop save operation
+against this backend. Use the website for editing until the matching update is installed.
+
+Owner actions: approve Expo account/build access so the matching candidate can be
+built and submitted, install it through TestFlight once Apple finishes processing,
+and perform the physical-device checklist. Tester invitations and public App Store
+review have not been sent. See `docs/MODERN_PLANNER_HANDOFF.md`.
 
 ## Modern Planner design — locally verified October 19
 
@@ -163,10 +201,11 @@ signed native iOS build. Real iPhone acceptance remains to be run on build 3.
 
 ## Remaining gates
 
-1. **Apple processing and tester access.** Upload succeeded. Wait for Apple to
-   finish processing version `1.0.0` build `3`, then make the build available to the
-   intended internal testing group. TestFlight page:
-   https://appstoreconnect.apple.com/apps/6778994659/testflight/ios.
+1. **Matching Modern Planner iPhone build.** Expo account access was declined, so
+   build and submission are still pending. Approve the access/build prompts or
+   follow `docs/MODERN_PLANNER_HANDOFF.md`. After a new successful build is submitted,
+   wait for Apple processing and select it for the intended internal TestFlight group.
+   The earlier build 3 does not contain Modern Planner.
    Tester invitations and public App Store review have not been dispatched.
 2. **Real iPhone acceptance.** Run the authenticated Maestro flow plus the full
    manual checklist in `apps/mobile/ROLL_OUT_CHECKLIST.md`. No real-device pass
