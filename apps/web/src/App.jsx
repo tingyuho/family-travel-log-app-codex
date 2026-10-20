@@ -1,6 +1,6 @@
 import AuthPortal from "./components/AuthPortal";
 import PlannerIcon from "./components/PlannerIcon";
-import PlannerTripView from "./components/PlannerTripView";
+import TripSpotlight from "./components/TripSpotlight";
 import { Fragment, useEffect, useMemo, useRef, useState } from "react";
 import {
   CircleMarker,
@@ -526,6 +526,7 @@ export default function App() {
   const [showCreateTrip, setShowCreateTrip] = useState(false);
   const [selectionMode, setSelectionMode] = useState(false);
   const [listMode, setListMode] = useState("list");
+  const [filtersOpen, setFiltersOpen] = useState(false);
   const [detailTripId, setDetailTripId] = useState(null);
   const [addStopTarget, setAddStopTarget] = useState(null);
   const [workflowNotice, setWorkflowNotice] = useState(null);
@@ -1673,11 +1674,12 @@ export default function App() {
             </div>
 
             <div hidden={activeTab !== "trips" || showCreateTrip}>
-                {!tripEdit && !loading && displayedTrips[0] ? <PlannerTripView key={displayedTrips[0].id} trip={displayedTrips[0]} onOpen={() => openDetails(displayedTrips[0])} onAddStop={() => setAddStopTarget({ tripId: displayedTrips[0].id })} /> : null}
-                <div className="library-header"><h2>Trips</h2><div className="action-row">
+                {!tripEdit && !loading && displayedTrips[0] ? <TripSpotlight trip={displayedTrips[0]} onOpen={() => openDetails(displayedTrips[0])} onAddStop={() => setAddStopTarget({ tripId: displayedTrips[0].id })} /> : null}
+                <div className="library-header"><h2>Trip library <span className="trip-count">{displayedTrips.length}</span></h2><div className="action-row">
                   <button type="button" onClick={() => setShowCreateTrip(true)}>Add Trip</button>
                   <button type="button" className="ghost-btn" onClick={() => setAddStopTarget({ tripId: null })}>Add Stop</button>
                 </div></div>
+                <div className="library-controls">
         <form onSubmit={onSearchSubmit} className="search-form">
           <input
             aria-label="Search trips" placeholder="Search trips, people, or places"
@@ -1692,8 +1694,10 @@ export default function App() {
                   <button type="button" aria-pressed={listMode === "timeline"} onClick={() => setListMode("timeline")}>Timeline</button>
                   <button type="button" className="ghost-btn" aria-pressed={selectionMode} onClick={() => { setSelectionMode(!selectionMode); setSelectedTripIds([]); }}>{selectionMode ? "Done" : "Select"}</button>
                 </div>
+                  <button type="button" className="ghost-btn filter-toggle" aria-expanded={filtersOpen} aria-controls="trip-filters" onClick={() => setFiltersOpen((open) => !open)}>Filters{selectedPeopleFilters.length || selectedTripKindFilter !== "all" ? ` · ${selectedPeopleFilters.length + (selectedTripKindFilter !== "all" ? 1 : 0)}` : ""}</button>
+                </div>
                 {selectionMode ? <div className="selection-bar"><span>{selectedTrips.length} selected</span><button type="button" disabled={!selectedTrips.length} onClick={() => { mapReturnRef.current = null; navigateTab("map"); }}>View on Map</button><button type="button" className="ghost-btn" onClick={() => setSelectedTripIds([])}>Clear selection</button></div> : null}
-                <div className="trips-header">
+                <div className={`trips-header ${filtersOpen ? "is-open" : ""}`} id="trip-filters">
                   <div className="trips-controls">
                     <div className="sort-control">
                       People
@@ -1876,7 +1880,7 @@ export default function App() {
                     return (
                       <li
                         key={trip.id}
-                        className={selectedTripIdsSet.has(trip.id) ? "is-selected" : ""}
+                        className={selectionMode && selectedTripIdsSet.has(trip.id) ? "is-selected" : ""}
                         onClick={(event) => {
                           if (!event.target.closest("button, input, label, summary, details, a")) openDetails(trip);
                         }}
@@ -1922,11 +1926,12 @@ export default function App() {
                             </div></details>
                           </div>
                         </div>
-                        <p>
-                          {trip.start_date || "Dates not set"}{trip.end_date ? ` – ${trip.end_date}` : ""}
-                        </p>
-                        <p><strong>{getTripKindLabel(trip.trip_kind)}</strong></p>
-                        <p>{trip.notes}</p>
+                        <div className="trip-meta">
+                          <span>{trip.start_date || "Dates not set"}{trip.end_date ? ` – ${trip.end_date}` : ""}</span>
+                          <span className="trip-kind">{getTripKindLabel(trip.trip_kind)}</span>
+                          {trip.route?.length ? <span>{trip.route.length} {trip.route.length === 1 ? "place" : "places"}</span> : null}
+                        </div>
+                        {trip.notes?.trim() ? <p className="trip-note-preview">{trip.notes}</p> : null}
                         {trip.people?.length ? <p><strong>People:</strong> {trip.people.join(", ")}</p> : null}
                         {trip.accommodations?.length ? (
                           <p>
