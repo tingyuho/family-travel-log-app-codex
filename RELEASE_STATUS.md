@@ -6,14 +6,14 @@ remain open. Historical release notes below describe earlier builds.
 
 ## Modern Planner — live on the existing domain, October 19
 
-Website: https://family-travel-log-app-codex.vercel.app. Both web and backend now run
-code candidate `e711b37baf95bc9e080565f12d439dccb856fca0`. The existing Render service,
-Neon production database, Vercel project, and public domain were reused. No additional
-preview server or domain was created.
+Website: https://family-travel-log-app-codex.vercel.app. The backend runs feature
+release `e711b37baf95bc9e080565f12d439dccb856fca0`; the current web layout runs
+`6e6711f7cae1e636596bc4cca48029c548c28843`. The existing Render service, Neon
+production database, Vercel project, and public domain were reused.
 
 - Render deployment `dep-dbbe0ke7bikc7387hl9g` is live on the existing API origin.
   The additive startup migration installed trip-version protection.
-- Vercel deployment `dpl_GkCKHejX5tLeTAM7uyK7WUXYSPAq` was promoted to the existing
+- Initial Vercel deployment `dpl_GkCKHejX5tLeTAM7uyK7WUXYSPAq` was promoted to the existing
   primary domain after its source-commit metadata was verified.
 - Fresh pre-rollout Neon recovery checkpoint: `pre-modern-planner-rollout-2026-10-19`
   (`br-frosty-cherry-anf7zqsa`), copied from production without a compute endpoint.
@@ -54,6 +54,31 @@ Owner actions: approve Expo account/build access so the matching candidate can b
 built and submitted, install it through TestFlight once Apple finishes processing,
 and perform the physical-device checklist. Tester invitations and public App Store
 review have not been sent. See `docs/MODERN_PLANNER_HANDOFF.md`.
+
+## Web layout refinement — October 19
+
+Vercel deployment `dpl_3wVCTTiihc1ygc2ckEj3gsYPcLA4` now serves the existing
+primary domain from web source `6e6711f7cae1e636596bc4cca48029c548c28843`.
+The backend and database configuration did not need another deployment.
+
+- Corrected the panel background cascade so the trip area no longer forms a white
+  slab with uneven edges. Each card has its own consistent rounded boundary.
+- Replaced the full dashboard itinerary with a compact spotlight and Open plan
+  action. Full Itinerary, Places, Stays, notes, and travelers remain in trip details.
+- Grouped search/view controls, tightened card metadata and spacing, and collapsed
+  mobile filters behind an accessible Filters button with an active-filter count.
+- Selection outlines now appear only in Select mode; returning from a focused map
+  no longer leaves a card looking selected.
+- Validation: 31 web tests, the production build, repository secret scan, and final
+  production verification passed. Browser checks covered details sections, phone
+  filter open/apply/close behavior, empty results, map return, and selection styling.
+  Layouts at 320 px and 390 px have no horizontal overflow. Hosted login and full
+  itinerary access pass; no browser console errors were captured.
+- With the same hosted synthetic trips, the full page now measures 799 px high
+  at a 1280 × 720 viewport, and the library begins at 323 px.
+
+[Updated live layout](docs/images/modern-planner-compact-live.jpg). The earlier
+`modern-planner-live.jpg` is retained as pre-refinement evidence.
 
 ## Modern Planner design — locally verified October 19
 

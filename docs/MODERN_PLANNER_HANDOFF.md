@@ -6,14 +6,15 @@ Open https://family-travel-log-app-codex.vercel.app. This existing domain now se
 Modern Planner and uses the matching production backend. Do not use the older
 unique preview address as the release URL.
 
-The tested code commit is `e711b37baf95bc9e080565f12d439dccb856fca0`. Render deployment
-`dep-dbbe0ke7bikc7387hl9g` and Vercel deployment `dpl_GkCKHejX5tLeTAM7uyK7WUXYSPAq`
-serve the matching release. PostgreSQL health, primary-domain CORS, auth, trip saves,
+The backend feature release is `e711b37baf95bc9e080565f12d439dccb856fca0` on Render
+deployment `dep-dbbe0ke7bikc7387hl9g`. The current web layout is
+`6e6711f7cae1e636596bc4cca48029c548c28843` on Vercel deployment
+`dpl_3wVCTTiihc1ygc2ckEj3gsYPcLA4`; it uses the same versioned API. PostgreSQL health, primary-domain CORS, auth, trip saves,
 real place search, appended stops, and edit-conflict protection were verified.
 Browser checks also passed for creating/editing a trip, adding a searched place,
 refresh persistence, map navigation, and logout.
 
-![Live Modern Planner verification](images/modern-planner-live.jpg)
+![Live Modern Planner verification](images/modern-planner-compact-live.jpg)
 
 ## Owner actions
 
