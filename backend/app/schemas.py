@@ -1,15 +1,16 @@
 from __future__ import annotations
 
 from datetime import date, datetime
+from typing import Literal
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 
 class RoutePoint(BaseModel):
-    lat: float
-    lng: float
-    label: str | None = None
-    order: int | None = None
+    lat: float = Field(ge=-90, le=90)
+    lng: float = Field(ge=-180, le=180)
+    label: str | None = Field(default=None, max_length=160)
+    order: int | None = Field(default=None, ge=0)
 
 
 class Accommodation(BaseModel):
@@ -18,6 +19,12 @@ class Accommodation(BaseModel):
     check_in: date | None = None
     check_out: date | None = None
     notes: str = ""
+
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "Accommodation":
+        if self.check_in and self.check_out and self.check_out < self.check_in:
+            raise ValueError("Accommodation check-out cannot be before check-in")
+        return self
 
 
 class ItineraryEvent(BaseModel):
@@ -30,6 +37,7 @@ class ItineraryEvent(BaseModel):
 
 class TripBase(BaseModel):
     title: str = Field(min_length=1, max_length=140)
+    trip_kind: Literal["past", "wishlist"] = "past"
     start_date: date | None = None
     end_date: date | None = None
     notes: str = ""
@@ -38,16 +46,28 @@ class TripBase(BaseModel):
     accommodations: list[Accommodation] = Field(default_factory=list)
     itinerary: list[ItineraryEvent] = Field(default_factory=list)
 
+    @model_validator(mode="after")
+    def validate_date_range(self) -> "TripBase":
+        if self.start_date and self.end_date and self.end_date < self.start_date:
+            raise ValueError("Trip end date cannot be before start date")
+        return self
+
 
 class TripCreate(TripBase):
     pass
 
 
 class TripUpdate(TripBase):
-    pass
+    version: int | None = Field(default=None, ge=1)
+
+
+class TripStopCreate(BaseModel):
+    point: RoutePoint
+    itinerary_event: ItineraryEvent | None = None
 
 
 class Trip(TripBase):
+    version: int = Field(default=1, ge=1)
     id: int
     created_at: datetime
     updated_at: datetime
@@ -69,7 +89,12 @@ class PersonProfileUpdate(PersonProfileBase):
 
 class PersonProfile(PersonProfileBase):
     id: int
+    sort_order: int = 0
     created_at: datetime
+
+
+class PersonProfileReorder(BaseModel):
+    ordered_ids: list[int] = Field(default_factory=list, min_length=1)
 
 
 class PackingTemplateBase(BaseModel):
@@ -133,3 +158,10 @@ class UserProfileUpdate(BaseModel):
         max_length=254,
         pattern=r"^[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}$",
     )
+
+
+class LocationSuggestion(BaseModel):
+    place_id: str
+    display_name: str
+    lat: str
+    lon: str

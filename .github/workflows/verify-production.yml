@@ -1,0 +1,33 @@
+name: Verify production deployment
+
+on:
+  schedule:
+    - cron: "17 * * * *"
+  workflow_dispatch:
+    inputs:
+      web_url:
+        description: Deployed browser origin, such as https://travel.example.com
+        required: false
+        type: string
+      api_url:
+        description: Deployed API origin, such as https://api.example.com
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Verify health, PostgreSQL, OpenAPI, web entry, and CORS
+        env:
+          PRODUCTION_WEB_BASE_URL: ${{ inputs.web_url || vars.PRODUCTION_WEB_BASE_URL }}
+          PRODUCTION_API_BASE_URL: ${{ inputs.api_url || vars.PRODUCTION_API_BASE_URL }}
+        run: node scripts/verify-production-deployment.js

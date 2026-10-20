@@ -1,0 +1,49 @@
+services:
+  - type: web
+    name: family-travel-log-api
+    runtime: python
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT --no-access-log --log-config logging.json
+    healthCheckPath: /health/db
+    autoDeployTrigger: checksPass
+    envVars:
+      - key: APP_ENV
+        value: production
+      - key: PYTHON_VERSION
+        value: 3.12.8
+      - key: DATABASE_URL
+        fromDatabase:
+          name: family-travel-log-db
+          property: connectionString
+      - key: FRONTEND_ORIGINS
+        sync: false
+      - key: SESSION_TTL_DAYS
+        value: "30"
+      - key: PASSWORD_RESET_ADMIN_KEY_ENABLED
+        value: "false"
+      - key: AUTH_LOGIN_RATE_LIMIT_PER_MINUTE
+        value: "8"
+      - key: PASSWORD_RESET_RATE_LIMIT_PER_MINUTE
+        value: "4"
+      - key: GEOCODER_PROVIDER
+        value: google_places
+      - key: GOOGLE_PLACES_API_KEY
+        sync: false
+      - key: SMTP_HOST
+        sync: false
+      - key: SMTP_PORT
+        value: "587"
+      - key: SMTP_USERNAME
+        sync: false
+      - key: SMTP_PASSWORD
+        sync: false
+      - key: SMTP_FROM_EMAIL
+        sync: false
+      - key: SMTP_USE_TLS
+        value: "true"
+
+databases:
+  - name: family-travel-log-db
+    databaseName: family_travel_log
+    user: family_travel_log

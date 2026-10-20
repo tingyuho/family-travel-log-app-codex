@@ -1,0 +1,21 @@
+{
+  "version": 1,
+  "disable_existing_loggers": false,
+  "formatters": {
+    "message": { "format": "%(message)s" }
+  },
+  "handlers": {
+    "requests": {
+      "class": "logging.StreamHandler",
+      "formatter": "message",
+      "stream": "ext://sys.stdout"
+    }
+  },
+  "loggers": {
+    "family_travel_log.requests": {
+      "handlers": ["requests"],
+      "level": "INFO",
+      "propagate": false
+    }
+  }
+}

@@ -1,0 +1,5 @@
+appId: com.tyhotw.familytravellogmobile
+---
+- launchApp
+- assertVisible: "Family Travel Log"
+- assertVisible: "Login"
